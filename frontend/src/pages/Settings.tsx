@@ -1,0 +1,267 @@
+import React, { useEffect, useState } from 'react';
+import api from '../lib/api';
+import { useAuth } from '../hooks/useAuth';
+import toast from 'react-hot-toast';
+import Card from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+
+export default function Settings() {
+  const { business, refreshUser } = useAuth();
+  const [tab, setTab] = useState<'business' | 'password' | 'brand'>('business');
+  const [loading, setLoading] = useState(false);
+
+  const [form, setForm] = useState({
+    name: '', address: '', city: '', phone: '', email: '',
+    bankName: '', bankBranch: '', bankAccount: '',
+  });
+
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '', newPassword: '', confirmPassword: '',
+  });
+
+  const [brandForm, setBrandForm] = useState({
+    primaryColor: '#6C63FF',
+    secondaryColor: '#00D4AA',
+  });
+
+  useEffect(() => {
+    if (business) {
+      setForm({
+        name: business.name || '',
+        address: business.address || '',
+        city: business.city || '',
+        phone: business.phone || '',
+        email: business.email || '',
+        bankName: business.bankName || '',
+        bankBranch: business.bankBranch || '',
+        bankAccount: business.bankAccount || '',
+      });
+      setBrandForm({
+        primaryColor: business.primaryColor || '#6C63FF',
+        secondaryColor: business.secondaryColor || '#00D4AA',
+      });
+    }
+  }, [business]);
+
+  const handleUpdateBusiness = async () => {
+    setLoading(true);
+    try {
+      await api.put('/businesses/current', form);
+      await refreshUser();
+      toast.success('פרטי העסק עודכנו');
+    } catch {
+      toast.error('שגיאה בעדכון');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      toast.error('הסיסמאות לא תואמות');
+      return;
+    }
+    if (passwordForm.newPassword.length < 8) {
+      toast.error('סיסמה חדשה חייבת להכיל לפחות 8 תווים');
+      return;
+    }
+    setLoading(true);
+    try {
+      await api.post('/settings/change-password', {
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      });
+      toast.success('סיסמה עודכנה בהצלחה');
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { error?: string } } };
+      toast.error(error.response?.data?.error || 'שגיאה בעדכון סיסמה');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateBrand = async () => {
+    setLoading(true);
+    try {
+      await api.put('/businesses/current', brandForm);
+      await refreshUser();
+      toast.success('צבעי המותג עודכנו');
+    } catch {
+      toast.error('שגיאה בעדכון');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) {
+      toast.error('הקובץ גדול מדי (מקסימום 500KB)');
+      return;
+    }
+    const formData = new FormData();
+    formData.append('logo', file);
+    try {
+      await api.post('/businesses/current/logo', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      await refreshUser();
+      toast.success('הלוגו הועלה בהצלחה');
+    } catch {
+      toast.error('שגיאה בהעלאת הלוגו');
+    }
+  };
+
+  const tabs = [
+    { key: 'business' as const, label: 'פרטי עסק' },
+    { key: 'brand' as const, label: 'מיתוג' },
+    { key: 'password' as const, label: 'סיסמה' },
+  ];
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>הגדרות</h1>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            style={{
+              padding: '8px 20px',
+              background: tab === t.key ? 'var(--accent-primary)' : 'transparent',
+              color: tab === t.key ? 'white' : 'var(--text-secondary)',
+              border: tab === t.key ? 'none' : '1px solid var(--border)',
+              borderRadius: 'var(--radius-xs)',
+              fontSize: 14,
+              fontWeight: 500,
+              cursor: 'pointer',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'business' && (
+        <Card>
+          <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20 }}>פרטי עסק</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Input label="שם העסק" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <Input label="מייל" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} style={{ direction: 'ltr', textAlign: 'right' }} />
+            <Input label="טלפון" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            <Input label="עיר" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} />
+          </div>
+          <Input label="כתובת" value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginTop: 24, marginBottom: 12 }}>פרטי בנק</h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <Input label="שם בנק" value={form.bankName} onChange={(e) => setForm({ ...form, bankName: e.target.value })} />
+            <Input label="סניף" value={form.bankBranch} onChange={(e) => setForm({ ...form, bankBranch: e.target.value })} />
+            <Input label="מספר חשבון" value={form.bankAccount} onChange={(e) => setForm({ ...form, bankAccount: e.target.value })} />
+          </div>
+
+          <div style={{ marginTop: 8, padding: '12px', background: 'var(--bg-primary)', borderRadius: 'var(--radius-xs)', fontSize: 13, color: 'var(--text-muted)' }}>
+            <p>סוג עוסק: <strong>{business?.businessType === 'OSEK_PATUR' ? 'עוסק פטור' : 'עוסק מורשה'}</strong></p>
+            <p>ח.פ./ת.ז.: <strong>{business?.taxId}</strong></p>
+            {business?.vatNumber && <p>מס' עוסק מורשה: <strong>{business.vatNumber}</strong></p>}
+          </div>
+
+          <Button onClick={handleUpdateBusiness} loading={loading} style={{ marginTop: 20 }}>
+            שמור שינויים
+          </Button>
+        </Card>
+      )}
+
+      {tab === 'brand' && (
+        <Card>
+          <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20 }}>מיתוג ולוגו</h2>
+
+          <div style={{ marginBottom: 24 }}>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 8 }}>
+              לוגו (PNG/JPG/SVG, עד 500KB)
+            </label>
+            {business?.logoUrl && (
+              <img src={business.logoUrl} alt="Logo" style={{ maxWidth: 120, maxHeight: 60, marginBottom: 12, display: 'block' }} />
+            )}
+            <input type="file" accept=".png,.jpg,.jpeg,.svg" onChange={handleLogoUpload} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                צבע ראשי
+              </label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="color" value={brandForm.primaryColor} onChange={(e) => setBrandForm({ ...brandForm, primaryColor: e.target.value })} />
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{brandForm.primaryColor}</span>
+              </div>
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                צבע משני
+              </label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="color" value={brandForm.secondaryColor} onChange={(e) => setBrandForm({ ...brandForm, secondaryColor: e.target.value })} />
+                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{brandForm.secondaryColor}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div style={{ padding: 20, background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', marginBottom: 20, border: '1px solid var(--border)' }}>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>תצוגה מקדימה:</p>
+            <div style={{
+              background: brandForm.primaryColor, color: 'white',
+              padding: '12px 20px', borderRadius: 'var(--radius-xs)', display: 'inline-block', marginLeft: 8,
+            }}>
+              כפתור ראשי
+            </div>
+            <div style={{
+              background: brandForm.secondaryColor, color: 'white',
+              padding: '12px 20px', borderRadius: 'var(--radius-xs)', display: 'inline-block',
+            }}>
+              כפתור משני
+            </div>
+          </div>
+
+          <Button onClick={handleUpdateBrand} loading={loading}>שמור צבעים</Button>
+        </Card>
+      )}
+
+      {tab === 'password' && (
+        <Card>
+          <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20 }}>שינוי סיסמה</h2>
+          <div style={{ maxWidth: 400 }}>
+            <Input
+              label="סיסמה נוכחית"
+              type="password"
+              value={passwordForm.currentPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+              style={{ direction: 'ltr', textAlign: 'right' }}
+            />
+            <Input
+              label="סיסמה חדשה"
+              type="password"
+              value={passwordForm.newPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+              style={{ direction: 'ltr', textAlign: 'right' }}
+            />
+            <Input
+              label="אימות סיסמה חדשה"
+              type="password"
+              value={passwordForm.confirmPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+              style={{ direction: 'ltr', textAlign: 'right' }}
+            />
+            <Button onClick={handleChangePassword} loading={loading}>עדכן סיסמה</Button>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,228 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BusinessType {
+  OSEK_PATUR
+  OSEK_MURSHE
+}
+
+enum UserRole {
+  OWNER
+  ACCOUNTANT
+  VIEWER
+}
+
+enum DocumentType {
+  INVOICE
+  RECEIPT
+  RECEIPT_INVOICE
+  CREDIT_NOTE
+  DELIVERY_NOTE
+}
+
+enum DocumentStatus {
+  DRAFT
+  SENT
+  PAID
+  CANCELLED
+  CREDIT_NOTED
+}
+
+enum Currency {
+  ILS
+  USD
+  EUR
+}
+
+enum PaymentMethod {
+  CASH
+  CHECK
+  BANK_TRANSFER
+  CREDIT_CARD
+  OTHER
+}
+
+enum EntryType {
+  INCOME
+  EXPENSE
+}
+
+model Business {
+  id             String       @id @default(uuid())
+  name           String
+  businessType   BusinessType @map("business_type")
+  taxId          String       @map("tax_id")
+  vatNumber      String?      @map("vat_number")
+  address        String?
+  city           String?
+  phone          String?
+  email          String?
+  logoUrl        String?      @map("logo_url")
+  primaryColor   String       @default("#6C63FF") @map("primary_color")
+  secondaryColor String       @default("#00D4AA") @map("secondary_color")
+  bankName       String?      @map("bank_name")
+  bankBranch     String?      @map("bank_branch")
+  bankAccount    String?      @map("bank_account")
+
+  nextInvoiceNumber        Int @default(1) @map("next_invoice_number")
+  nextReceiptNumber        Int @default(1) @map("next_receipt_number")
+  nextReceiptInvoiceNumber Int @default(1) @map("next_receipt_invoice_number")
+  nextCreditNoteNumber     Int @default(1) @map("next_credit_note_number")
+  nextDeliveryNoteNumber   Int @default(1) @map("next_delivery_note_number")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users          User[]
+  customers      Customer[]
+  documents      Document[]
+  cashbookEntries CashbookEntry[]
+
+  @@map("businesses")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  businessId   String   @map("business_id")
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  role         UserRole @default(OWNER)
+  refreshToken String?  @map("refresh_token")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  business  Business    @relation(fields: [businessId], references: [id])
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model Customer {
+  id         String   @id @default(uuid())
+  businessId String   @map("business_id")
+  name       String
+  taxId      String?  @map("tax_id")
+  address    String?
+  city       String?
+  phone      String?
+  email      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business  Business   @relation(fields: [businessId], references: [id])
+  documents Document[]
+
+  @@map("customers")
+}
+
+model Document {
+  id             String         @id @default(uuid())
+  businessId     String         @map("business_id")
+  customerId     String?        @map("customer_id")
+  documentType   DocumentType   @map("document_type")
+  documentNumber Int            @map("document_number")
+  issueDate      DateTime       @map("issue_date")
+  dueDate        DateTime?      @map("due_date")
+  status         DocumentStatus @default(DRAFT)
+  currency       Currency       @default(ILS)
+
+  // All amounts stored as integers (agorot/cents)
+  subtotal  Int @default(0)
+  vatAmount Int @default(0) @map("vat_amount")
+  total     Int @default(0)
+  vatRate   Int @default(17) @map("vat_rate")
+
+  notes            String?
+  paymentMethod    PaymentMethod? @map("payment_method")
+  paymentReference String?        @map("payment_reference")
+  pdfUrl           String?        @map("pdf_url")
+
+  // For credit notes - reference to original document
+  originalDocumentId String?   @map("original_document_id")
+  originalDocument   Document? @relation("CreditNoteRelation", fields: [originalDocumentId], references: [id])
+  creditNotes        Document[] @relation("CreditNoteRelation")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  business        Business        @relation(fields: [businessId], references: [id])
+  customer        Customer?       @relation(fields: [customerId], references: [id])
+  items           DocumentItem[]
+  cashbookEntries CashbookEntry[]
+  emailLogs       EmailLog[]
+
+  @@unique([businessId, documentType, documentNumber])
+  @@map("documents")
+}
+
+model DocumentItem {
+  id              String  @id @default(uuid())
+  documentId      String  @map("document_id")
+  description     String
+  quantity         Int     @default(100) // stored as quantity * 100 for precision
+  unitPrice       Int     @map("unit_price") // in agorot
+  discountPercent Int     @default(0) @map("discount_percent") // stored as percent * 100
+  lineTotal       Int     @map("line_total") // in agorot
+  vatIncluded     Boolean @default(false) @map("vat_included")
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  document Document @relation(fields: [documentId], references: [id])
+
+  @@map("document_items")
+}
+
+model CashbookEntry {
+  id                      String        @id @default(uuid())
+  businessId              String        @map("business_id")
+  documentId              String?       @map("document_id")
+  entryType               EntryType     @map("entry_type")
+  entryDate               DateTime      @map("entry_date")
+  amount                  Int           // in agorot
+  vatAmount               Int           @default(0) @map("vat_amount")
+  customerOrSupplierName  String?       @map("customer_or_supplier_name")
+  description             String?
+  paymentMethod           PaymentMethod? @map("payment_method")
+  paymentReference        String?       @map("payment_reference")
+  runningBalance          Int           @default(0) @map("running_balance")
+  createdAt               DateTime      @default(now()) @map("created_at")
+
+  business Business  @relation(fields: [businessId], references: [id])
+  document Document? @relation(fields: [documentId], references: [id])
+
+  @@map("cashbook_entries")
+}
+
+model EmailLog {
+  id             String   @id @default(uuid())
+  documentId     String   @map("document_id")
+  recipientEmail String   @map("recipient_email")
+  sentAt         DateTime @default(now()) @map("sent_at")
+  status         String   @default("pending")
+  errorMessage   String?  @map("error_message")
+
+  document Document @relation(fields: [documentId], references: [id])
+
+  @@map("email_logs")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?  @map("user_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  details    String?
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@map("audit_logs")
+}
