@@ -111,11 +111,22 @@ export default function DocumentCreate() {
         })),
       });
 
-      toast.success(asDraft ? 'טיוטה נשמרה' : 'מסמך הופק בהצלחה!');
-      navigate(`/documents/${data.id}`);
+      if (data.allocationPending) {
+        // Allocation failed — navigate to document view for user decision
+        toast.error(data.allocationResult?.errorMessage || 'רשות המסים דחתה את הבקשה — יש לבחור פעולה');
+        navigate(`/documents/${data.id}`);
+      } else {
+        toast.success(asDraft ? 'טיוטה נשמרה' : 'מסמך הופק בהצלחה!');
+        navigate(`/documents/${data.id}`);
+      }
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { error?: string } } };
-      toast.error(error.response?.data?.error || 'שגיאה ביצירת מסמך');
+      const error = err as { response?: { data?: { error?: string; code?: string } } };
+      if (error.response?.data?.code === 'ALLOCATION_NO_CREDENTIALS') {
+        toast.error('יש להגדיר חיבור לחשבונית ישראל בהגדרות');
+        navigate('/settings');
+      } else {
+        toast.error(error.response?.data?.error || 'שגיאה ביצירת מסמך');
+      }
     } finally {
       setLoading(false);
     }

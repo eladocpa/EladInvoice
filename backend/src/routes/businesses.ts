@@ -47,6 +47,8 @@ const updateBusinessSchema = z.object({
   bankName: z.string().optional(),
   bankBranch: z.string().optional(),
   bankAccount: z.string().optional(),
+  chavonitClientId: z.string().optional(),
+  chavonitClientSecret: z.string().optional(),
 });
 
 // Get business details

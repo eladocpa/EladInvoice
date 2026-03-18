@@ -274,6 +274,8 @@ router.get('/me', authenticate, async (req: Request, res: Response) => {
         bankName: user.business.bankName,
         bankBranch: user.business.bankBranch,
         bankAccount: user.business.bankAccount,
+        chavonitClientId: user.business.chavonitClientId,
+        chavonitClientSecret: user.business.chavonitClientSecret ? '••••••••' : null,
       },
     });
   } catch {

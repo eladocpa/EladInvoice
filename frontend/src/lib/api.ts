@@ -66,6 +66,8 @@ export interface Business {
   bankName: string | null;
   bankBranch: string | null;
   bankAccount: string | null;
+  chavonitClientId: string | null;
+  chavonitClientSecret: string | null;
 }
 
 export interface Customer {
@@ -110,9 +112,13 @@ export interface DocumentData {
   paymentReference: string | null;
   pdfUrl: string | null;
   originalDocumentId: string | null;
+  allocationNumber: string | null;
+  allocationStatus: 'NOT_REQUIRED' | 'PENDING' | 'APPROVED' | 'FAILED' | 'SKIPPED';
   customer: Customer | null;
   items: DocumentItem[];
   createdAt: string;
+  allocationResult?: { status: string; errorMessage?: string };
+  allocationPending?: boolean;
 }
 
 export interface DashboardStats {

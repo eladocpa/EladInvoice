@@ -9,7 +9,15 @@ import { generatePdf } from '../services/pdf';
 import { createCashbookEntry } from '../services/cashbook';
 import { sendDocumentEmail } from '../services/email';
 import { sendWhatsApp } from '../services/whatsapp';
-import { DocumentType, DocumentStatus } from '@prisma/client';
+import {
+  isAllocationRequired,
+  hasAllocationCredentials,
+  requestAllocationNumber,
+  markAllocationFailed,
+  getAllocationThreshold,
+  testAllocationConnection,
+} from '../services/allocation';
+import { DocumentType } from '@prisma/client';
 
 const router = Router();
 router.use(authenticate);
@@ -35,6 +43,8 @@ const createDocumentSchema = z.object({
   items: z.array(documentItemSchema).min(1, 'חייב להוסיף לפחות פריט אחד'),
   originalDocumentId: z.string().uuid().optional().nullable(),
   asDraft: z.boolean().default(false),
+  // Allocation options when API rejects
+  allocationAction: z.enum(['request', 'continue_without', 'cancel', 'reverse_charge']).optional(),
 });
 
 // List documents
@@ -83,6 +93,43 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// Check allocation requirement (pre-check before creating)
+router.post('/check-allocation', validate(z.object({
+  documentType: z.string(),
+  customerId: z.string().uuid().optional().nullable(),
+  subtotal: z.number().int(),
+  vatRate: z.number().int(),
+})), async (req: Request, res: Response) => {
+  try {
+    const business = await prisma.business.findUnique({
+      where: { id: req.user!.businessId },
+    });
+    if (!business) {
+      res.status(404).json({ error: 'עסק לא נמצא' });
+      return;
+    }
+
+    let customer = null;
+    if (req.body.customerId) {
+      customer = await prisma.customer.findFirst({
+        where: { id: req.body.customerId, businessId: req.user!.businessId },
+      });
+    }
+
+    const required = isAllocationRequired(business, req.body, customer);
+    const hasCredentials = hasAllocationCredentials(business);
+
+    res.json({
+      required,
+      hasCredentials,
+      threshold: getAllocationThreshold(),
+      missingCredentials: required && !hasCredentials,
+    });
+  } catch {
+    res.status(500).json({ error: 'שגיאה בבדיקת הקצאה' });
+  }
+});
+
 // Create document
 router.post('/', validate(createDocumentSchema), async (req: Request, res: Response) => {
   try {
@@ -95,7 +142,8 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
     }
 
     const { documentType, customerId, issueDate, dueDate, currency, notes,
-            paymentMethod, paymentReference, items, originalDocumentId, asDraft } = req.body;
+            paymentMethod, paymentReference, items, originalDocumentId, asDraft,
+            allocationAction } = req.body;
 
     // Validate document type for business type
     const isOsekPatur = business.businessType === 'OSEK_PATUR';
@@ -123,6 +171,30 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
       vatRate,
     );
 
+    // Get customer if specified
+    let customer = null;
+    if (customerId) {
+      customer = await prisma.customer.findFirst({
+        where: { id: customerId, businessId: business.id },
+      });
+    }
+
+    // Check allocation requirement
+    const needsAllocation = !isOsekPatur && !asDraft && isAllocationRequired(
+      business,
+      { subtotal: totals.subtotal, vatRate, documentType },
+      customer,
+    );
+
+    // If allocation needed but no credentials, block
+    if (needsAllocation && !hasAllocationCredentials(business) && allocationAction !== 'cancel') {
+      res.status(400).json({
+        error: 'יש להגדיר חיבור לחשבונית ישראל בהגדרות לפני הפקת מסמך זה',
+        code: 'ALLOCATION_NO_CREDENTIALS',
+      });
+      return;
+    }
+
     // Get document number (only for non-drafts)
     const isDraft = asDraft === true;
     let documentNumber = 0;
@@ -148,6 +220,7 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
         paymentMethod: paymentMethod || null,
         paymentReference,
         originalDocumentId: originalDocumentId || null,
+        allocationStatus: needsAllocation ? 'PENDING' : 'NOT_REQUIRED',
         items: {
           create: calculatedItems.map((item: z.infer<typeof documentItemSchema> & { lineTotal: number }) => ({
             description: item.description,
@@ -163,20 +236,148 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
       include: { customer: true, items: true },
     });
 
+    // Handle allocation for non-drafts
+    if (!isDraft && needsAllocation && customer) {
+      const allocationResult = await requestAllocationNumber(business, document, customer);
+
+      if (allocationResult.status === 'APPROVED') {
+        // Success — allocation number saved by the service
+      } else if (allocationResult.status === 'FAILED') {
+        // API rejected — check what user wants to do
+        if (allocationAction === 'continue_without') {
+          // User chose to continue without allocation
+          await markAllocationFailed(document.id);
+        } else if (allocationAction === 'reverse_charge' && customer?.taxId) {
+          // Reverse charge: create cancellation + zero-VAT invoice
+          // 1. Cancel current document
+          await prisma.document.update({
+            where: { id: document.id },
+            data: { status: 'CANCELLED', allocationStatus: 'SKIPPED' },
+          });
+
+          // 2. Create credit note (cancellation)
+          const creditNoteNumber = await getNextDocumentNumber(prisma, business.id, 'CREDIT_NOTE');
+          await prisma.document.create({
+            data: {
+              businessId: business.id,
+              customerId: customerId || null,
+              documentType: 'CREDIT_NOTE',
+              documentNumber: creditNoteNumber,
+              issueDate: new Date(issueDate),
+              status: 'SENT',
+              currency,
+              subtotal: -totals.subtotal,
+              vatAmount: -totals.vatAmount,
+              total: -totals.total,
+              vatRate,
+              notes: `ביטול בגין סירוב חשבונית ישראל — מסמך מקורי מס' ${documentNumber}`,
+              originalDocumentId: document.id,
+              allocationStatus: 'NOT_REQUIRED',
+              items: {
+                create: calculatedItems.map((item: z.infer<typeof documentItemSchema> & { lineTotal: number }, i: number) => ({
+                  description: item.description,
+                  quantity: -item.quantity,
+                  unitPrice: item.unitPrice,
+                  discountPercent: item.discountPercent,
+                  lineTotal: -item.lineTotal,
+                  vatIncluded: item.vatIncluded,
+                  sortOrder: i,
+                })),
+              },
+            },
+          });
+
+          // 3. Create new invoice with 0% VAT (reverse charge)
+          const newInvoiceNumber = await getNextDocumentNumber(prisma, business.id, documentType as DocumentType);
+          const reverseChargeDoc = await prisma.document.create({
+            data: {
+              businessId: business.id,
+              customerId: customerId || null,
+              documentType: documentType as DocumentType,
+              documentNumber: newInvoiceNumber,
+              issueDate: new Date(issueDate),
+              dueDate: dueDate ? new Date(dueDate) : null,
+              status: 'SENT',
+              currency,
+              subtotal: totals.subtotal,
+              vatAmount: 0,
+              total: totals.subtotal,
+              vatRate: 0,
+              notes: `בגין חשבונית זו הלקוח חייב לדווח חשבונית עצמית\n${notes || ''}`.trim(),
+              paymentMethod: paymentMethod || null,
+              paymentReference,
+              allocationStatus: 'NOT_REQUIRED',
+              items: {
+                create: calculatedItems.map((item: z.infer<typeof documentItemSchema> & { lineTotal: number }) => ({
+                  description: item.description,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                  discountPercent: item.discountPercent,
+                  lineTotal: item.lineTotal,
+                  vatIncluded: item.vatIncluded,
+                  sortOrder: item.sortOrder,
+                })),
+              },
+            },
+            include: { customer: true, items: true },
+          });
+
+          // Generate PDF and cashbook for the reverse charge doc
+          try {
+            const pdfUrl = await generatePdf(reverseChargeDoc, business);
+            await prisma.document.update({
+              where: { id: reverseChargeDoc.id },
+              data: { pdfUrl },
+            });
+          } catch (err) {
+            console.error('PDF generation error:', err);
+          }
+          await createCashbookEntry(reverseChargeDoc, business);
+
+          res.status(201).json({
+            ...reverseChargeDoc,
+            allocationResult,
+            reverseCharge: true,
+            originalCancelledId: document.id,
+          });
+          return;
+        } else {
+          // Return the allocation failure for frontend to handle
+          const refreshedDoc = await prisma.document.findUnique({
+            where: { id: document.id },
+            include: { customer: true, items: true },
+          });
+
+          res.status(201).json({
+            ...refreshedDoc,
+            allocationResult,
+            allocationPending: true,
+          });
+          return;
+        }
+      }
+    }
+
+    // Reload document to get updated allocation fields
+    const finalDoc = await prisma.document.findUnique({
+      where: { id: document.id },
+      include: { customer: true, items: true },
+    });
+
     // Generate PDF and create cashbook entry for non-drafts
-    if (!isDraft) {
+    if (!isDraft && finalDoc) {
       try {
-        const pdfUrl = await generatePdf(document, business);
+        const pdfUrl = await generatePdf(finalDoc, business);
         await prisma.document.update({
-          where: { id: document.id },
+          where: { id: finalDoc.id },
           data: { pdfUrl },
         });
-        document.pdfUrl = pdfUrl;
+        finalDoc.pdfUrl = pdfUrl;
       } catch (err) {
         console.error('PDF generation error:', err);
       }
 
-      await createCashbookEntry(document, business);
+      await createCashbookEntry(finalDoc, business);
 
       // Mark original as CREDIT_NOTED if this is a credit note
       if (documentType === 'CREDIT_NOTE' && originalDocumentId) {
@@ -193,14 +394,85 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
         action: isDraft ? 'CREATE_DRAFT' : 'CREATE_DOCUMENT',
         entityType: 'document',
         entityId: document.id,
-        details: JSON.stringify({ documentType, documentNumber }),
+        details: JSON.stringify({ documentType, documentNumber, allocationStatus: finalDoc?.allocationStatus }),
       },
     });
 
-    res.status(201).json(document);
+    res.status(201).json(finalDoc);
   } catch (error) {
     console.error('Document creation error:', error);
     res.status(500).json({ error: 'שגיאה ביצירת מסמך' });
+  }
+});
+
+// Resolve allocation — user chose action after API failure
+router.post('/:id/resolve-allocation', async (req: Request, res: Response) => {
+  try {
+    const { action } = req.body; // 'continue_without' | 'cancel'
+
+    const document = await prisma.document.findFirst({
+      where: {
+        id: req.params.id,
+        businessId: req.user!.businessId,
+        allocationStatus: 'PENDING',
+      },
+      include: { customer: true, items: true },
+    });
+    if (!document) {
+      res.status(404).json({ error: 'מסמך לא נמצא או שכבר טופל' });
+      return;
+    }
+
+    const business = await prisma.business.findUnique({
+      where: { id: req.user!.businessId },
+    });
+    if (!business) {
+      res.status(404).json({ error: 'עסק לא נמצא' });
+      return;
+    }
+
+    if (action === 'continue_without') {
+      await markAllocationFailed(document.id);
+
+      // Generate PDF with warning
+      try {
+        const updatedDoc = await prisma.document.findUnique({
+          where: { id: document.id },
+          include: { customer: true, items: true },
+        });
+        if (updatedDoc) {
+          const pdfUrl = await generatePdf(updatedDoc, business);
+          await prisma.document.update({
+            where: { id: document.id },
+            data: { pdfUrl },
+          });
+        }
+      } catch (err) {
+        console.error('PDF generation error:', err);
+      }
+
+      const result = await prisma.document.findUnique({
+        where: { id: document.id },
+        include: { customer: true, items: true },
+      });
+      res.json(result);
+    } else if (action === 'cancel') {
+      // Revert to draft
+      await prisma.document.update({
+        where: { id: document.id },
+        data: { status: 'DRAFT', allocationStatus: 'SKIPPED', documentNumber: 0 },
+      });
+
+      const result = await prisma.document.findUnique({
+        where: { id: document.id },
+        include: { customer: true, items: true },
+      });
+      res.json(result);
+    } else {
+      res.status(400).json({ error: 'פעולה לא תקינה' });
+    }
+  } catch {
+    res.status(500).json({ error: 'שגיאה בטיפול בהקצאה' });
   }
 });
 
@@ -226,24 +498,65 @@ router.post('/:id/finalize', async (req: Request, res: Response) => {
 
     const documentNumber = await getNextDocumentNumber(prisma, business.id, document.documentType);
 
+    // Check allocation requirement
+    const needsAllocation = isAllocationRequired(
+      business,
+      { subtotal: document.subtotal, vatRate: document.vatRate, documentType: document.documentType },
+      document.customer,
+    );
+
+    if (needsAllocation && !hasAllocationCredentials(business)) {
+      res.status(400).json({
+        error: 'יש להגדיר חיבור לחשבונית ישראל בהגדרות לפני הפקת מסמך זה',
+        code: 'ALLOCATION_NO_CREDENTIALS',
+      });
+      return;
+    }
+
     const updated = await prisma.document.update({
       where: { id: document.id },
-      data: { status: 'SENT', documentNumber },
+      data: {
+        status: 'SENT',
+        documentNumber,
+        allocationStatus: needsAllocation ? 'PENDING' : 'NOT_REQUIRED',
+      },
       include: { customer: true, items: true },
     });
 
-    try {
-      const pdfUrl = await generatePdf(updated, business);
-      await prisma.document.update({
-        where: { id: updated.id },
-        data: { pdfUrl },
-      });
-      updated.pdfUrl = pdfUrl;
-    } catch (err) {
-      console.error('PDF generation error:', err);
+    // Request allocation if needed
+    if (needsAllocation && updated.customer) {
+      const allocationResult = await requestAllocationNumber(business, updated, updated.customer);
+      if (allocationResult.status === 'FAILED') {
+        // Return with allocation pending for frontend handling
+        const refreshedDoc = await prisma.document.findUnique({
+          where: { id: updated.id },
+          include: { customer: true, items: true },
+        });
+        res.json({ ...refreshedDoc, allocationResult, allocationPending: true });
+        return;
+      }
     }
 
-    await createCashbookEntry(updated, business);
+    // Reload with allocation data
+    const finalDoc = await prisma.document.findUnique({
+      where: { id: updated.id },
+      include: { customer: true, items: true },
+    });
+
+    if (finalDoc) {
+      try {
+        const pdfUrl = await generatePdf(finalDoc, business);
+        await prisma.document.update({
+          where: { id: finalDoc.id },
+          data: { pdfUrl },
+        });
+        finalDoc.pdfUrl = pdfUrl;
+      } catch (err) {
+        console.error('PDF generation error:', err);
+      }
+
+      await createCashbookEntry(finalDoc, business);
+    }
 
     await prisma.auditLog.create({
       data: {
@@ -254,10 +567,30 @@ router.post('/:id/finalize', async (req: Request, res: Response) => {
       },
     });
 
-    res.json(updated);
+    res.json(finalDoc);
   } catch {
     res.status(500).json({ error: 'שגיאה בהפקת המסמך' });
   }
+});
+
+// Test allocation connection
+router.post('/test-allocation', async (req: Request, res: Response) => {
+  try {
+    const { clientId, clientSecret } = req.body;
+    if (!clientId || !clientSecret) {
+      res.status(400).json({ error: 'חובה למלא Client ID ו-Client Secret' });
+      return;
+    }
+    const result = await testAllocationConnection(clientId, clientSecret);
+    res.json(result);
+  } catch {
+    res.status(500).json({ error: 'שגיאה בבדיקת החיבור' });
+  }
+});
+
+// Get allocation info
+router.get('/allocation-info', async (_req: Request, res: Response) => {
+  res.json({ threshold: getAllocationThreshold() });
 });
 
 // Mark as paid

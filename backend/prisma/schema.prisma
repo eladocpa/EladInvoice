@@ -53,6 +53,14 @@ enum EntryType {
   EXPENSE
 }
 
+enum AllocationStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  FAILED
+  SKIPPED
+}
+
 model Business {
   id             String       @id @default(uuid())
   name           String
@@ -69,6 +77,10 @@ model Business {
   bankName       String?      @map("bank_name")
   bankBranch     String?      @map("bank_branch")
   bankAccount    String?      @map("bank_account")
+
+  // חשבונית ישראל credentials
+  chavonitClientId     String? @map("chavonit_client_id")
+  chavonitClientSecret String? @map("chavonit_client_secret")
 
   nextInvoiceNumber        Int @default(1) @map("next_invoice_number")
   nextReceiptNumber        Int @default(1) @map("next_receipt_number")
@@ -143,6 +155,12 @@ model Document {
   paymentMethod    PaymentMethod? @map("payment_method")
   paymentReference String?        @map("payment_reference")
   pdfUrl           String?        @map("pdf_url")
+
+  // חשבונית ישראל — allocation number
+  allocationNumber      String?           @map("allocation_number")
+  allocationStatus      AllocationStatus  @default(NOT_REQUIRED) @map("allocation_status")
+  allocationRequestedAt DateTime?         @map("allocation_requested_at")
+  allocationResponseRaw Json?             @map("allocation_response_raw")
 
   // For credit notes - reference to original document
   originalDocumentId String?   @map("original_document_id")

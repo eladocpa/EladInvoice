@@ -282,6 +282,16 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
       <strong>הערות:</strong> ${document.notes}
     </div>` : ''}
 
+    ${document.allocationStatus === 'APPROVED' && document.allocationNumber ? `
+    <div style="background: #e8f5e9; border: 2px solid #4caf50; border-radius: 8px; padding: 12px 15px; margin-bottom: 15px; text-align: center;">
+      <strong style="font-size: 16px; color: #2e7d32;">מספר הקצאה: ${document.allocationNumber}</strong>
+    </div>` : ''}
+
+    ${document.allocationStatus === 'FAILED' ? `
+    <div style="background: #ffebee; border: 2px solid #e74c3c; border-radius: 8px; padding: 12px 15px; margin-bottom: 15px; text-align: center;">
+      <strong style="font-size: 15px; color: #c62828;">⚠ אין לנכות מס תשומות בגין חשבונית זו</strong>
+    </div>` : ''}
+
     <div class="legal">
       ${isOsekPatur ? '<p class="warning">אינני רשום כעוסק מורשה, העסקה פטורה ממע"מ</p>' : ''}
       ${document.documentType === 'CREDIT_NOTE' && document.originalDocumentId ?

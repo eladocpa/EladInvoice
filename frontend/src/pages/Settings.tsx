@@ -6,9 +6,12 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 
+type TabKey = 'business' | 'password' | 'brand' | 'chavonit';
+
 export default function Settings() {
   const { business, refreshUser } = useAuth();
-  const [tab, setTab] = useState<'business' | 'password' | 'brand'>('business');
+  const isOsekMurshe = business?.businessType === 'OSEK_MURSHE';
+  const [tab, setTab] = useState<TabKey>('business');
   const [loading, setLoading] = useState(false);
 
   const [form, setForm] = useState({
@@ -24,6 +27,14 @@ export default function Settings() {
     primaryColor: '#6C63FF',
     secondaryColor: '#00D4AA',
   });
+
+  const [chavonitForm, setChavonitForm] = useState({
+    clientId: '',
+    clientSecret: '',
+  });
+  const [chavonitThreshold, setChavonitThreshold] = useState(10000);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
 
   useEffect(() => {
     if (business) {
@@ -41,8 +52,20 @@ export default function Settings() {
         primaryColor: business.primaryColor || '#6C63FF',
         secondaryColor: business.secondaryColor || '#00D4AA',
       });
+      setChavonitForm({
+        clientId: business.chavonitClientId || '',
+        clientSecret: business.chavonitClientSecret || '',
+      });
     }
   }, [business]);
+
+  useEffect(() => {
+    if (isOsekMurshe) {
+      api.get('/documents/allocation-info')
+        .then(({ data }) => setChavonitThreshold(data.threshold))
+        .catch(() => {});
+    }
+  }, [isOsekMurshe]);
 
   const handleUpdateBusiness = async () => {
     setLoading(true);
@@ -115,15 +138,84 @@ export default function Settings() {
     }
   };
 
-  const tabs = [
-    { key: 'business' as const, label: 'פרטי עסק' },
-    { key: 'brand' as const, label: 'מיתוג' },
-    { key: 'password' as const, label: 'סיסמה' },
+  const handleSaveChavonit = async () => {
+    setLoading(true);
+    try {
+      await api.put('/businesses/current', {
+        chavonitClientId: chavonitForm.clientId || null,
+        chavonitClientSecret: chavonitForm.clientSecret || null,
+      });
+      await refreshUser();
+      toast.success('פרטי חשבונית ישראל עודכנו');
+    } catch {
+      toast.error('שגיאה בעדכון');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    if (!chavonitForm.clientId || !chavonitForm.clientSecret) {
+      toast.error('יש למלא Client ID ו-Client Secret');
+      return;
+    }
+    setTestingConnection(true);
+    setTestResult(null);
+    try {
+      const { data } = await api.post('/documents/test-allocation', {
+        clientId: chavonitForm.clientId,
+        clientSecret: chavonitForm.clientSecret,
+      });
+      setTestResult(data);
+    } catch {
+      setTestResult({ success: false, message: 'שגיאה בבדיקת החיבור' });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const tabs: Array<{ key: TabKey; label: string }> = [
+    { key: 'business', label: 'פרטי עסק' },
+    { key: 'brand', label: 'מיתוג' },
+    ...(isOsekMurshe ? [{ key: 'chavonit' as TabKey, label: 'חשבונית ישראל' }] : []),
+    { key: 'password', label: 'סיסמה' },
   ];
+
+  const hasChavonitCredentials = !!(business?.chavonitClientId && business?.chavonitClientSecret);
 
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>הגדרות</h1>
+
+      {/* Warning banner for missing chavonit credentials */}
+      {isOsekMurshe && !hasChavonitCredentials && (
+        <div style={{
+          background: 'rgba(255, 181, 71, 0.15)',
+          border: '1px solid rgba(255, 181, 71, 0.4)',
+          borderRadius: 'var(--radius-sm)',
+          padding: '12px 16px',
+          marginBottom: 20,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}>
+          <span style={{ fontSize: 20 }}>&#9888;</span>
+          <div>
+            <p style={{ fontSize: 14, color: 'var(--warning)', fontWeight: 600 }}>
+              לא הגדרת חיבור לחשבונית ישראל
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+              חובה חוקית לחשבוניות מעל {chavonitThreshold.toLocaleString('he-IL')} ₪ (לפני מע"מ).{' '}
+              <button
+                onClick={() => setTab('chavonit')}
+                style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', textDecoration: 'underline', fontSize: 13 }}
+              >
+                הגדר עכשיו
+              </button>
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 24 }}>
@@ -177,6 +269,99 @@ export default function Settings() {
         </Card>
       )}
 
+      {tab === 'chavonit' && isOsekMurshe && (
+        <Card>
+          <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>חשבונית ישראל — חיבור לרשות המסים</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24 }}>
+            לפי חוק ההתייעלות הכלכלית, עוסק מורשה חייב לקבל מספר הקצאה מרשות המסים לחשבוניות מעל הסף הנוכחי.
+          </p>
+
+          {/* Threshold display */}
+          <div style={{
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius-sm)',
+            padding: '14px 18px',
+            marginBottom: 24,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}>
+            <div>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>סף נוכחי לחיבור</p>
+              <p className="tabular-nums" style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent-primary)' }}>
+                ₪{chavonitThreshold.toLocaleString('he-IL')}
+              </p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>לפני מע"מ</p>
+            </div>
+            <div style={{ textAlign: 'left', fontSize: 12, color: 'var(--text-muted)' }}>
+              <p>01.01.2026 — ₪10,000</p>
+              <p>01.06.2026 — ₪5,000</p>
+            </div>
+          </div>
+
+          {/* Credentials */}
+          <div style={{ maxWidth: 500 }}>
+            <Input
+              label="Client ID"
+              value={chavonitForm.clientId}
+              onChange={(e) => setChavonitForm({ ...chavonitForm, clientId: e.target.value })}
+              tooltip="מספר הזיהוי שניתן ע&quot;י רשות המסים"
+              style={{ direction: 'ltr', textAlign: 'right' }}
+            />
+            <Input
+              label="Client Secret"
+              type="password"
+              value={chavonitForm.clientSecret}
+              onChange={(e) => setChavonitForm({ ...chavonitForm, clientSecret: e.target.value })}
+              tooltip="הסיסמה הסודית מרשות המסים"
+              style={{ direction: 'ltr', textAlign: 'right' }}
+            />
+          </div>
+
+          {/* Test result */}
+          {testResult && (
+            <div style={{
+              padding: '12px 16px',
+              borderRadius: 'var(--radius-xs)',
+              marginBottom: 16,
+              background: testResult.success ? 'rgba(0, 212, 170, 0.1)' : 'rgba(255, 87, 87, 0.1)',
+              border: `1px solid ${testResult.success ? 'rgba(0, 212, 170, 0.3)' : 'rgba(255, 87, 87, 0.3)'}`,
+              color: testResult.success ? 'var(--success)' : 'var(--error)',
+              fontSize: 14,
+            }}>
+              {testResult.success ? '✅' : '❌'} {testResult.message}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 12 }}>
+            <Button variant="secondary" onClick={handleTestConnection} loading={testingConnection}>
+              בדוק חיבור
+            </Button>
+            <Button onClick={handleSaveChavonit} loading={loading}>
+              שמור פרטים
+            </Button>
+          </div>
+
+          <div style={{
+            marginTop: 24,
+            padding: 14,
+            background: 'var(--bg-primary)',
+            borderRadius: 'var(--radius-xs)',
+            fontSize: 12,
+            color: 'var(--text-muted)',
+            lineHeight: 1.8,
+          }}>
+            <p><strong>מתי נדרש מספר הקצאה?</strong></p>
+            <p>1. העסק הוא עוסק מורשה</p>
+            <p>2. סכום החשבונית לפני מע"מ עולה על הסף</p>
+            <p>3. החשבונית כוללת מע"מ</p>
+            <p>4. מקבל החשבונית הוא עוסק מורשה (בעל ח.פ.)</p>
+            <p style={{ marginTop: 8 }}>אם אחד מהתנאים לא מתקיים — המסמך יופק ללא מספר הקצאה.</p>
+          </div>
+        </Card>
+      )}
+
       {tab === 'brand' && (
         <Card>
           <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20 }}>מיתוג ולוגו</h2>
@@ -212,19 +397,12 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Preview */}
           <div style={{ padding: 20, background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', marginBottom: 20, border: '1px solid var(--border)' }}>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>תצוגה מקדימה:</p>
-            <div style={{
-              background: brandForm.primaryColor, color: 'white',
-              padding: '12px 20px', borderRadius: 'var(--radius-xs)', display: 'inline-block', marginLeft: 8,
-            }}>
+            <div style={{ background: brandForm.primaryColor, color: 'white', padding: '12px 20px', borderRadius: 'var(--radius-xs)', display: 'inline-block', marginLeft: 8 }}>
               כפתור ראשי
             </div>
-            <div style={{
-              background: brandForm.secondaryColor, color: 'white',
-              padding: '12px 20px', borderRadius: 'var(--radius-xs)', display: 'inline-block',
-            }}>
+            <div style={{ background: brandForm.secondaryColor, color: 'white', padding: '12px 20px', borderRadius: 'var(--radius-xs)', display: 'inline-block' }}>
               כפתור משני
             </div>
           </div>

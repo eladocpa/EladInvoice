@@ -227,8 +227,76 @@ export default function DocumentView() {
               padding: 12,
               fontSize: 13,
               color: 'var(--warning)',
+              marginBottom: 16,
             }}>
               אינני רשום כעוסק מורשה, העסקה פטורה ממע"מ
+            </div>
+          )}
+
+          {/* Allocation number display */}
+          {doc.allocationStatus === 'APPROVED' && doc.allocationNumber && (
+            <div style={{
+              background: 'rgba(0, 212, 170, 0.1)',
+              border: '2px solid rgba(0, 212, 170, 0.4)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '14px 18px',
+              textAlign: 'center',
+              marginBottom: 16,
+            }}>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>מספר הקצאה</p>
+              <p className="tabular-nums" style={{ fontSize: 22, fontWeight: 700, color: 'var(--success)' }}>
+                {doc.allocationNumber}
+              </p>
+            </div>
+          )}
+
+          {doc.allocationStatus === 'FAILED' && (
+            <div style={{
+              background: 'rgba(255, 87, 87, 0.1)',
+              border: '2px solid rgba(255, 87, 87, 0.4)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '14px 18px',
+              textAlign: 'center',
+              marginBottom: 16,
+            }}>
+              <p style={{ fontSize: 15, fontWeight: 700, color: 'var(--error)' }}>
+                &#9888; אין לנכות מס תשומות בגין חשבונית זו
+              </p>
+            </div>
+          )}
+
+          {doc.allocationStatus === 'PENDING' && (
+            <div style={{
+              background: 'rgba(255, 181, 71, 0.1)',
+              border: '2px solid rgba(255, 181, 71, 0.4)',
+              borderRadius: 'var(--radius-sm)',
+              padding: '14px 18px',
+              textAlign: 'center',
+              marginBottom: 16,
+            }}>
+              <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--warning)' }}>
+                &#9888; ממתין להחלטה — מספר הקצאה לא התקבל
+              </p>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 12 }}>
+                <Button size="sm" variant="danger" onClick={async () => {
+                  try {
+                    const { data } = await api.post(`/documents/${doc.id}/resolve-allocation`, { action: 'continue_without' });
+                    setDoc(data);
+                    toast.success('המסמך הופק ללא מספר הקצאה');
+                  } catch { toast.error('שגיאה'); }
+                }}>
+                  המשך ללא הקצאה
+                </Button>
+                <Button size="sm" variant="secondary" onClick={async () => {
+                  try {
+                    const { data } = await api.post(`/documents/${doc.id}/resolve-allocation`, { action: 'cancel' });
+                    setDoc(data);
+                    toast.success('המסמך הוחזר לטיוטה');
+                  } catch { toast.error('שגיאה'); }
+                }}>
+                  בטל והחזר לטיוטה
+                </Button>
+              </div>
             </div>
           )}
         </div>
