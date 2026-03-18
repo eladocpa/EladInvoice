@@ -3,7 +3,7 @@
  * All amounts are in agorot (integer cents) to avoid floating point issues.
  */
 
-const VAT_RATE = parseInt(process.env.VAT_RATE || '17', 10);
+const VAT_RATE = parseInt(process.env.VAT_RATE || '18', 10);
 
 /**
  * Round half up — standard Israeli tax rounding.

@@ -37,7 +37,7 @@ export default function DocumentCreate() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isOsekPatur = business?.businessType === 'OSEK_PATUR';
-  const vatRate = isOsekPatur ? 0 : 17;
+  const vatRate = isOsekPatur ? 0 : 18;
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);

@@ -137,7 +137,7 @@ model Document {
   subtotal  Int @default(0)
   vatAmount Int @default(0) @map("vat_amount")
   total     Int @default(0)
-  vatRate   Int @default(17) @map("vat_rate")
+  vatRate   Int @default(18) @map("vat_rate")
 
   notes            String?
   paymentMethod    PaymentMethod? @map("payment_method")

@@ -80,7 +80,7 @@ CREATE TABLE "documents" (
     "subtotal" INTEGER NOT NULL DEFAULT 0,
     "vat_amount" INTEGER NOT NULL DEFAULT 0,
     "total" INTEGER NOT NULL DEFAULT 0,
-    "vat_rate" INTEGER NOT NULL DEFAULT 17,
+    "vat_rate" INTEGER NOT NULL DEFAULT 18,
     "notes" TEXT,
     "payment_method" "PaymentMethod",
     "payment_reference" TEXT,

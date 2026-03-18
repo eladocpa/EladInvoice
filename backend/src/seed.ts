@@ -91,9 +91,9 @@ async function main() {
       dueDate: new Date('2026-02-15'),
       status: 'PAID',
       subtotal: 500000,
-      vatAmount: 85000,
-      total: 585000,
-      vatRate: 17,
+      vatAmount: 90000,
+      total: 590000,
+      vatRate: 18,
       paymentMethod: 'BANK_TRANSFER',
       items: {
         create: [
@@ -113,9 +113,9 @@ async function main() {
       issueDate: new Date('2026-02-01'),
       status: 'SENT',
       subtotal: 200000,
-      vatAmount: 34000,
-      total: 234000,
-      vatRate: 17,
+      vatAmount: 36000,
+      total: 236000,
+      vatRate: 18,
       paymentMethod: 'CREDIT_CARD',
       items: {
         create: [
@@ -135,9 +135,9 @@ async function main() {
       dueDate: new Date('2026-03-30'),
       status: 'SENT',
       subtotal: 1200000,
-      vatAmount: 204000,
-      total: 1404000,
-      vatRate: 17,
+      vatAmount: 216000,
+      total: 1416000,
+      vatRate: 18,
       paymentMethod: 'BANK_TRANSFER',
       items: {
         create: [
@@ -155,12 +155,12 @@ async function main() {
       documentId: doc1.id,
       entryType: 'INCOME',
       entryDate: new Date('2026-01-15'),
-      amount: 585000,
-      vatAmount: 85000,
+      amount: 590000,
+      vatAmount: 90000,
       customerOrSupplierName: 'חברת אלפא בע"מ',
       description: 'חשבונית מס מס\' 1',
       paymentMethod: 'BANK_TRANSFER',
-      runningBalance: 585000,
+      runningBalance: 590000,
     },
   });
 
@@ -170,12 +170,12 @@ async function main() {
       documentId: doc2.id,
       entryType: 'INCOME',
       entryDate: new Date('2026-02-01'),
-      amount: 234000,
-      vatAmount: 34000,
+      amount: 236000,
+      vatAmount: 36000,
       customerOrSupplierName: 'משה כהן',
       description: 'חשבונית מס קבלה מס\' 1',
       paymentMethod: 'CREDIT_CARD',
-      runningBalance: 819000,
+      runningBalance: 826000,
     },
   });
 
@@ -185,12 +185,12 @@ async function main() {
       documentId: doc3.id,
       entryType: 'INCOME',
       entryDate: new Date('2026-03-01'),
-      amount: 1404000,
-      vatAmount: 204000,
+      amount: 1416000,
+      vatAmount: 216000,
       customerOrSupplierName: 'סופטוור גלובל בע"מ',
       description: 'חשבונית מס מס\' 2',
       paymentMethod: 'BANK_TRANSFER',
-      runningBalance: 2223000,
+      runningBalance: 2242000,
     },
   });
 
