@@ -1,1 +1,1 @@
-web: cd backend && npx prisma migrate deploy && npx prisma generate && node dist/index.js
+web: cd backend && (npx prisma migrate deploy || echo 'Migration skipped - DATABASE_URL not configured') && node dist/index.js

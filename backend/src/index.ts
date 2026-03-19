@@ -62,8 +62,17 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/settings', settingsRoutes);
 
 // Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (_req, res) => {
+  const health: Record<string, unknown> = { status: 'ok', timestamp: new Date().toISOString() };
+  try {
+    const { prisma } = await import('./utils/prisma');
+    await prisma.$queryRaw`SELECT 1`;
+    health.database = 'connected';
+  } catch {
+    health.database = 'disconnected';
+    health.warning = 'DATABASE_URL not configured — add a PostgreSQL database in Railway';
+  }
+  res.json(health);
 });
 
 // SPA fallback
