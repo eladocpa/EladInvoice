@@ -50,6 +50,11 @@ function getCurrencySymbol(currency: string): string {
   return symbols[currency] || currency;
 }
 
+/** Red asterisk for mandatory fields */
+function req(label: string): string {
+  return label + ' *';
+}
+
 export default function DocumentCreate() {
   const { business } = useAuth();
   const navigate = useNavigate();
@@ -59,6 +64,7 @@ export default function DocumentCreate() {
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // Quick customer creation
   const [showNewCustomer, setShowNewCustomer] = useState(false);
@@ -131,6 +137,12 @@ export default function DocumentCreate() {
 
   const updateItem = (index: number, field: keyof LineItem, value: string | number) => {
     setItems(items.map((item, i) => i === index ? { ...item, [field]: value } : item));
+    // Clear item-level errors when user edits
+    setFieldErrors(prev => {
+      const next = { ...prev };
+      delete next[`items.${index}.${field}`];
+      return next;
+    });
   };
 
   // Calculate totals
@@ -188,15 +200,42 @@ export default function DocumentCreate() {
   const isReceipt = ['RECEIPT', 'RECEIPT_INVOICE'].includes(form.documentType);
   const showPayerBank = isReceipt && ['BANK_TRANSFER', 'CHECK'].includes(form.paymentMethod);
 
-  const handleSubmit = async (asDraft: boolean) => {
-    if (items.some(i => !i.description || i.unitPrice <= 0)) {
-      toast.error('יש למלא תיאור ומחיר לכל פריט');
-      return;
+  // Client-side validation
+  const validate = (): Record<string, string> => {
+    const errors: Record<string, string> = {};
+
+    if (!form.issueDate) errors.issueDate = 'שדה חובה';
+
+    // Items validation
+    items.forEach((item, i) => {
+      if (!item.description) errors[`items.${i}.description`] = 'שדה חובה';
+      if (item.unitPrice <= 0) errors[`items.${i}.unitPrice`] = 'יש להזין מחיר';
+    });
+
+    // Receipt-specific validation
+    if (isReceipt && showPayerBank) {
+      if (!form.payerBankName) errors.payerBankName = 'שדה חובה';
     }
 
-    // Validate mandatory bank details for receipts with bank transfer/check
-    if (showPayerBank && !form.payerBankName) {
-      toast.error('יש למלא פרטי חשבון בנק משלם');
+    // Credit note must have original document
+    if (form.documentType === 'CREDIT_NOTE' && !form.originalDocumentId) {
+      errors.originalDocumentId = 'שדה חובה';
+    }
+
+    return errors;
+  };
+
+  const handleSubmit = async (asDraft: boolean) => {
+    // Clear previous errors
+    setFieldErrors({});
+
+    // Client-side validation
+    const errors = validate();
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      // Build a readable error message
+      const errorCount = Object.keys(errors).length;
+      toast.error(`יש ${errorCount} שדות שלא מולאו כראוי`);
       return;
     }
 
@@ -229,16 +268,37 @@ export default function DocumentCreate() {
         navigate(`/documents/${data.id}`);
       }
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { error?: string; code?: string } } };
+      const error = err as { response?: { data?: { error?: string; code?: string; details?: Array<{ field: string; message: string }> } } };
       if (error.response?.data?.code === 'ALLOCATION_NO_CREDENTIALS') {
         toast.error('יש להגדיר חיבור לחשבונית ישראל בהגדרות');
         navigate('/settings');
+      } else if (error.response?.data?.details) {
+        // Map backend validation errors to field errors
+        const backendErrors: Record<string, string> = {};
+        for (const detail of error.response.data.details) {
+          backendErrors[detail.field] = detail.message;
+        }
+        setFieldErrors(backendErrors);
+        toast.error('נתונים לא תקינים — יש לתקן את השדות המסומנים');
       } else {
         toast.error(error.response?.data?.error || 'שגיאה ביצירת מסמך');
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  // Helper to clear field error when editing
+  const updateForm = (updates: Partial<typeof form>) => {
+    setForm(prev => ({ ...prev, ...updates }));
+    // Clear errors for the updated fields
+    setFieldErrors(prev => {
+      const next = { ...prev };
+      for (const key of Object.keys(updates)) {
+        delete next[key];
+      }
+      return next;
+    });
   };
 
   return (
@@ -254,8 +314,9 @@ export default function DocumentCreate() {
               פרטי מסמך
             </h2>
             <Select
-              label="סוג מסמך"
+              label={req('סוג מסמך')}
               value={form.documentType}
+              error={fieldErrors.documentType}
               onChange={(e) => {
                 const newType = e.target.value;
                 const newIsReceipt = ['RECEIPT', 'RECEIPT_INVOICE'].includes(newType);
@@ -272,6 +333,7 @@ export default function DocumentCreate() {
                     dueDate: '',
                   } : {}),
                 });
+                setFieldErrors(prev => { const n = { ...prev }; delete n.documentType; return n; });
               }}
               options={docTypes}
             />
@@ -311,7 +373,7 @@ export default function DocumentCreate() {
               {customerMode === 'select' && (
                 <Select
                   value={form.customerId}
-                  onChange={(e) => setForm({ ...form, customerId: e.target.value })}
+                  onChange={(e) => updateForm({ customerId: e.target.value })}
                   options={[
                     { value: '', label: 'בחר לקוח (אופציונלי)' },
                     ...customers.map(c => ({ value: c.id, label: c.name })),
@@ -326,7 +388,7 @@ export default function DocumentCreate() {
                   borderRadius: 'var(--radius-sm)',
                 }}>
                   <Input
-                    label="שם לקוח *"
+                    label={req('שם לקוח')}
                     value={newCustomer.name}
                     onChange={(e) => setNewCustomer({ ...newCustomer, name: e.target.value })}
                     placeholder="שם הלקוח"
@@ -360,29 +422,20 @@ export default function DocumentCreate() {
               )}
             </div>
 
-            {/* Date: issue date always, due date only for receipts */}
-            <div style={{ display: 'grid', gridTemplateColumns: isReceipt ? '1fr 1fr' : '1fr', gap: 12 }}>
-              <Input
-                label="תאריך"
-                type="date"
-                value={form.issueDate}
-                onChange={(e) => setForm({ ...form, issueDate: e.target.value })}
-              />
-              {isReceipt && (
-                <Input
-                  label="תאריך תשלום"
-                  type="date"
-                  value={form.dueDate}
-                  onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-                />
-              )}
-            </div>
+            {/* Issue date only */}
+            <Input
+              label={req('תאריך')}
+              type="date"
+              value={form.issueDate}
+              error={fieldErrors.issueDate}
+              onChange={(e) => updateForm({ issueDate: e.target.value })}
+            />
 
             {/* Currency */}
             <Select
               label="מטבע"
               value={form.currency}
-              onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              onChange={(e) => updateForm({ currency: e.target.value })}
               options={CURRENCY_OPTIONS}
             />
 
@@ -422,7 +475,7 @@ export default function DocumentCreate() {
                 <input
                   type="checkbox"
                   checked={form.noVat}
-                  onChange={(e) => setForm({ ...form, noVat: e.target.checked })}
+                  onChange={(e) => updateForm({ noVat: e.target.checked })}
                   style={{ width: 18, height: 18 }}
                 />
                 <span>מסמך ללא מע"מ</span>
@@ -431,9 +484,10 @@ export default function DocumentCreate() {
 
             {form.documentType === 'CREDIT_NOTE' && (
               <Input
-                label="מזהה מסמך מקורי"
+                label={req('מזהה מסמך מקורי')}
                 value={form.originalDocumentId}
-                onChange={(e) => setForm({ ...form, originalDocumentId: e.target.value })}
+                error={fieldErrors.originalDocumentId}
+                onChange={(e) => updateForm({ originalDocumentId: e.target.value })}
                 tooltip="הזן את מזהה החשבונית המקורית שברצונך לזכות"
               />
             )}
@@ -450,7 +504,7 @@ export default function DocumentCreate() {
                 background: 'var(--bg-primary)',
                 borderRadius: 'var(--radius-sm)',
                 marginBottom: 12,
-                border: '1px solid var(--border)',
+                border: `1px solid ${(fieldErrors[`items.${index}.description`] || fieldErrors[`items.${index}.unitPrice`]) ? 'var(--error)' : 'var(--border)'}`,
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>פריט {index + 1}</span>
@@ -464,23 +518,25 @@ export default function DocumentCreate() {
                   )}
                 </div>
                 <Input
-                  label="תיאור"
+                  label={req('תיאור')}
                   value={item.description}
+                  error={fieldErrors[`items.${index}.description`]}
                   onChange={(e) => updateItem(index, 'description', e.target.value)}
                   placeholder="תיאור השירות או המוצר"
                 />
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
                   <Input
-                    label="כמות"
+                    label={req('כמות')}
                     type="number"
                     value={item.quantity / 100}
                     onChange={(e) => updateItem(index, 'quantity', Math.round(parseFloat(e.target.value || '0') * 100))}
                     style={{ direction: 'ltr' }}
                   />
                   <Input
-                    label={`מחיר (${currSymbol})`}
+                    label={req(`מחיר (${currSymbol})`)}
                     type="number"
                     value={item.unitPrice / 100}
+                    error={fieldErrors[`items.${index}.unitPrice`]}
                     onChange={(e) => updateItem(index, 'unitPrice', Math.round(parseFloat(e.target.value || '0') * 100))}
                     style={{ direction: 'ltr' }}
                   />
@@ -513,10 +569,19 @@ export default function DocumentCreate() {
               <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: 'var(--accent-primary)' }}>
                 פרטי תשלום
               </h2>
+
+              {/* Due date under payment section */}
+              <Input
+                label="תאריך תשלום"
+                type="date"
+                value={form.dueDate}
+                onChange={(e) => updateForm({ dueDate: e.target.value })}
+              />
+
               <Select
                 label="אמצעי תשלום"
                 value={form.paymentMethod}
-                onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
+                onChange={(e) => updateForm({ paymentMethod: e.target.value })}
                 options={[
                   { value: '', label: 'לא צוין' },
                   { value: 'CASH', label: 'מזומן' },
@@ -531,7 +596,7 @@ export default function DocumentCreate() {
                 <Input
                   label="מספר שיק / אסמכתא"
                   value={form.paymentReference}
-                  onChange={(e) => setForm({ ...form, paymentReference: e.target.value })}
+                  onChange={(e) => updateForm({ paymentReference: e.target.value })}
                 />
               )}
 
@@ -539,7 +604,7 @@ export default function DocumentCreate() {
               {showPayerBank && (
                 <div style={{
                   padding: 12, background: 'var(--bg-primary)',
-                  border: '1px solid var(--border)',
+                  border: `1px solid ${fieldErrors.payerBankName ? 'var(--error)' : 'var(--border)'}`,
                   borderRadius: 'var(--radius-sm)',
                   marginTop: 8,
                 }}>
@@ -547,21 +612,22 @@ export default function DocumentCreate() {
                     פרטי חשבון בנק משלם *
                   </p>
                   <Input
-                    label="שם בנק *"
+                    label={req('שם בנק')}
                     value={form.payerBankName}
-                    onChange={(e) => setForm({ ...form, payerBankName: e.target.value })}
+                    error={fieldErrors.payerBankName}
+                    onChange={(e) => updateForm({ payerBankName: e.target.value })}
                     placeholder="לדוגמה: הפועלים"
                   />
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     <Input
                       label="מספר סניף"
                       value={form.payerBankBranch}
-                      onChange={(e) => setForm({ ...form, payerBankBranch: e.target.value })}
+                      onChange={(e) => updateForm({ payerBankBranch: e.target.value })}
                     />
                     <Input
                       label="מספר חשבון"
                       value={form.payerBankAccount}
-                      onChange={(e) => setForm({ ...form, payerBankAccount: e.target.value })}
+                      onChange={(e) => updateForm({ payerBankAccount: e.target.value })}
                     />
                   </div>
                 </div>
@@ -573,7 +639,7 @@ export default function DocumentCreate() {
                   label="ניכוי מס במקור (%)"
                   type="number"
                   value={form.withholdingTaxPercent / 100}
-                  onChange={(e) => setForm({ ...form, withholdingTaxPercent: Math.round(parseFloat(e.target.value || '0') * 100) })}
+                  onChange={(e) => updateForm({ withholdingTaxPercent: Math.round(parseFloat(e.target.value || '0') * 100) })}
                   style={{ direction: 'ltr' }}
                   placeholder="לדוגמה: 20"
                 />
@@ -586,7 +652,7 @@ export default function DocumentCreate() {
             <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 12 }}>הערות</h2>
             <textarea
               value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              onChange={(e) => updateForm({ notes: e.target.value })}
               placeholder="הערות למסמך (אופציונלי)"
               rows={3}
               style={{

@@ -7,6 +7,9 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
 }
 
 export default function Select({ label, error, options, style, ...props }: SelectProps) {
+  const hasAsterisk = label?.endsWith(' *');
+  const labelText = hasAsterisk ? label!.slice(0, -2) : label;
+
   return (
     <div style={{ marginBottom: 16 }}>
       {label && (
@@ -17,7 +20,8 @@ export default function Select({ label, error, options, style, ...props }: Selec
           color: 'var(--text-secondary)',
           marginBottom: 6,
         }}>
-          {label}
+          {labelText}
+          {hasAsterisk && <span style={{ color: 'var(--error)', marginRight: 2 }}> *</span>}
         </label>
       )}
       <select

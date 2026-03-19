@@ -7,6 +7,10 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
 }
 
 export default function Input({ label, error, tooltip, style, ...props }: InputProps) {
+  // Split label to render asterisk in red
+  const hasAsterisk = label?.endsWith(' *');
+  const labelText = hasAsterisk ? label!.slice(0, -2) : label;
+
   return (
     <div style={{ marginBottom: 16 }}>
       {label && (
@@ -17,7 +21,8 @@ export default function Input({ label, error, tooltip, style, ...props }: InputP
           color: 'var(--text-secondary)',
           marginBottom: 6,
         }}>
-          {label}
+          {labelText}
+          {hasAsterisk && <span style={{ color: 'var(--error)', marginRight: 2 }}> *</span>}
           {tooltip && (
             <span
               title={tooltip}
