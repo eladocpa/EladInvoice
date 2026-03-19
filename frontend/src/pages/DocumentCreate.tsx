@@ -65,8 +65,8 @@ export default function DocumentCreate() {
   const [newCustomer, setNewCustomer] = useState({ name: '', taxId: '', phone: '', email: '' });
   const [creatingCustomer, setCreatingCustomer] = useState(false);
 
-  // Customer mode: 'select' | 'occasional' | 'new'
-  const [customerMode, setCustomerMode] = useState<'select' | 'occasional' | 'new'>('select');
+  // Customer mode: 'select' | 'new'
+  const [customerMode, setCustomerMode] = useState<'select' | 'new'>('select');
 
   // Exchange rate
   const [exchangeRate, setExchangeRate] = useState<number | null>(null);
@@ -154,7 +154,10 @@ export default function DocumentCreate() {
     : 0;
   const netAfterTax = total - withholdingAmount;
 
-  // ILS equivalent
+  // ILS equivalent for foreign currency
+  const isForeignCurrency = form.currency !== 'ILS';
+  const ilsSubtotal = exchangeRate ? Math.round(subtotal * exchangeRate) : null;
+  const ilsVatAmount = exchangeRate ? Math.round(vatAmount * exchangeRate) : null;
   const ilsTotal = exchangeRate ? Math.round(total * exchangeRate) : null;
 
   const currSymbol = getCurrencySymbol(form.currency);
@@ -181,9 +184,19 @@ export default function DocumentCreate() {
     }
   };
 
+  const docTypes = isOsekPatur ? DOC_TYPES_OSEK_PATUR : DOC_TYPES_OSEK_MURSHE;
+  const isReceipt = ['RECEIPT', 'RECEIPT_INVOICE'].includes(form.documentType);
+  const showPayerBank = isReceipt && ['BANK_TRANSFER', 'CHECK'].includes(form.paymentMethod);
+
   const handleSubmit = async (asDraft: boolean) => {
     if (items.some(i => !i.description || i.unitPrice <= 0)) {
       toast.error('יש למלא תיאור ומחיר לכל פריט');
+      return;
+    }
+
+    // Validate mandatory bank details for receipts with bank transfer/check
+    if (showPayerBank && !form.payerBankName) {
+      toast.error('יש למלא פרטי חשבון בנק משלם');
       return;
     }
 
@@ -192,8 +205,8 @@ export default function DocumentCreate() {
       const { data } = await api.post('/documents', {
         ...form,
         asDraft,
-        customerId: customerMode === 'occasional' ? null : (form.customerId || null),
-        dueDate: form.dueDate || null,
+        customerId: form.customerId || null,
+        dueDate: isReceipt ? (form.dueDate || null) : null,
         paymentMethod: isReceipt ? (form.paymentMethod || null) : null,
         paymentReference: isReceipt ? (form.paymentReference || null) : null,
         originalDocumentId: form.originalDocumentId || null,
@@ -228,10 +241,6 @@ export default function DocumentCreate() {
     }
   };
 
-  const docTypes = isOsekPatur ? DOC_TYPES_OSEK_PATUR : DOC_TYPES_OSEK_MURSHE;
-  const isReceipt = ['RECEIPT', 'RECEIPT_INVOICE'].includes(form.documentType);
-  const showPayerBank = ['BANK_TRANSFER', 'CHECK'].includes(form.paymentMethod);
-
   return (
     <div>
       <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 24 }}>מסמך חדש</h1>
@@ -239,6 +248,7 @@ export default function DocumentCreate() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
         {/* Form side */}
         <div>
+          {/* Document details */}
           <Card style={{ marginBottom: 20 }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: 'var(--accent-primary)' }}>
               פרטי מסמך
@@ -252,7 +262,6 @@ export default function DocumentCreate() {
                 setForm({
                   ...form,
                   documentType: newType,
-                  // Clear payment fields when switching away from receipt
                   ...(!newIsReceipt ? {
                     paymentMethod: '',
                     paymentReference: '',
@@ -260,13 +269,14 @@ export default function DocumentCreate() {
                     payerBankBranch: '',
                     payerBankAccount: '',
                     withholdingTaxPercent: 0,
+                    dueDate: '',
                   } : {}),
                 });
               }}
               options={docTypes}
             />
 
-            {/* Customer selection with quick create */}
+            {/* Customer selection: select existing or create new */}
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 6, color: 'var(--text-secondary)' }}>
                 לקוח
@@ -282,19 +292,7 @@ export default function DocumentCreate() {
                     cursor: 'pointer',
                   }}
                 >
-                  לקוח קיים
-                </button>
-                <button
-                  onClick={() => { setCustomerMode('occasional'); setShowNewCustomer(false); setForm(prev => ({ ...prev, customerId: '' })); }}
-                  style={{
-                    flex: 1, padding: '8px 12px', fontSize: 13, borderRadius: 'var(--radius-xs)',
-                    border: `1px solid ${customerMode === 'occasional' ? 'var(--accent-primary)' : 'var(--border)'}`,
-                    background: customerMode === 'occasional' ? 'var(--accent-primary)' : 'var(--bg-primary)',
-                    color: customerMode === 'occasional' ? 'white' : 'var(--text-primary)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  לקוח מזדמן
+                  בחר לקוח
                 </button>
                 <button
                   onClick={() => { setCustomerMode('new'); setShowNewCustomer(true); }}
@@ -319,16 +317,6 @@ export default function DocumentCreate() {
                     ...customers.map(c => ({ value: c.id, label: c.name })),
                   ]}
                 />
-              )}
-
-              {customerMode === 'occasional' && (
-                <div style={{
-                  padding: 12, background: 'rgba(255, 181, 71, 0.1)',
-                  border: '1px solid rgba(255, 181, 71, 0.3)',
-                  borderRadius: 'var(--radius-xs)', fontSize: 13, color: 'var(--warning)',
-                }}>
-                  המסמך יופק ללא פרטי לקוח (לקוח מזדמן)
-                </div>
               )}
 
               {customerMode === 'new' && showNewCustomer && (
@@ -372,46 +360,34 @@ export default function DocumentCreate() {
               )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            {/* Date: issue date always, due date only for receipts */}
+            <div style={{ display: 'grid', gridTemplateColumns: isReceipt ? '1fr 1fr' : '1fr', gap: 12 }}>
               <Input
                 label="תאריך"
                 type="date"
                 value={form.issueDate}
                 onChange={(e) => setForm({ ...form, issueDate: e.target.value })}
               />
-              <Input
-                label="תאריך לתשלום"
-                type="date"
-                value={form.dueDate}
-                onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
-              />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: isReceipt ? '1fr 1fr' : '1fr', gap: 12 }}>
-              <Select
-                label="מטבע"
-                value={form.currency}
-                onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                options={CURRENCY_OPTIONS}
-              />
               {isReceipt && (
-                <Select
-                  label="אמצעי תשלום"
-                  value={form.paymentMethod}
-                  onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
-                  options={[
-                    { value: '', label: 'לא צוין' },
-                    { value: 'CASH', label: 'מזומן' },
-                    { value: 'CHECK', label: 'שיק' },
-                    { value: 'BANK_TRANSFER', label: 'העברה בנקאית' },
-                    { value: 'CREDIT_CARD', label: 'כרטיס אשראי' },
-                    { value: 'OTHER', label: 'אחר' },
-                  ]}
+                <Input
+                  label="תאריך תשלום"
+                  type="date"
+                  value={form.dueDate}
+                  onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
                 />
               )}
             </div>
 
+            {/* Currency */}
+            <Select
+              label="מטבע"
+              value={form.currency}
+              onChange={(e) => setForm({ ...form, currency: e.target.value })}
+              options={CURRENCY_OPTIONS}
+            />
+
             {/* Exchange rate display */}
-            {form.currency !== 'ILS' && (
+            {isForeignCurrency && (
               <div style={{
                 padding: 10, background: 'rgba(108, 99, 255, 0.08)',
                 borderRadius: 'var(--radius-xs)', fontSize: 13,
@@ -435,46 +411,6 @@ export default function DocumentCreate() {
               </div>
             )}
 
-            {isReceipt && form.paymentMethod === 'CHECK' && (
-              <Input
-                label="מספר שיק / אסמכתא"
-                value={form.paymentReference}
-                onChange={(e) => setForm({ ...form, paymentReference: e.target.value })}
-              />
-            )}
-
-            {/* Payer bank details for bank transfer and check */}
-            {isReceipt && showPayerBank && (
-              <div style={{
-                padding: 12, background: 'var(--bg-primary)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-sm)',
-                marginBottom: 12,
-              }}>
-                <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--text-secondary)' }}>
-                  פרטי חשבון בנק משלם
-                </p>
-                <Input
-                  label="שם בנק"
-                  value={form.payerBankName}
-                  onChange={(e) => setForm({ ...form, payerBankName: e.target.value })}
-                  placeholder="לדוגמה: הפועלים"
-                />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <Input
-                    label="מספר סניף"
-                    value={form.payerBankBranch}
-                    onChange={(e) => setForm({ ...form, payerBankBranch: e.target.value })}
-                  />
-                  <Input
-                    label="מספר חשבון"
-                    value={form.payerBankAccount}
-                    onChange={(e) => setForm({ ...form, payerBankAccount: e.target.value })}
-                  />
-                </div>
-              </div>
-            )}
-
             {/* No VAT checkbox — only for osek murshe on invoices */}
             {!isOsekPatur && ['INVOICE', 'RECEIPT_INVOICE'].includes(form.documentType) && (
               <label style={{
@@ -493,25 +429,6 @@ export default function DocumentCreate() {
               </label>
             )}
 
-            {/* Withholding tax — for receipts */}
-            {isReceipt && (
-              <div style={{
-                padding: 12, background: 'var(--bg-primary)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-sm)',
-                marginBottom: 12,
-              }}>
-                <Input
-                  label="ניכוי מס במקור (%)"
-                  type="number"
-                  value={form.withholdingTaxPercent / 100}
-                  onChange={(e) => setForm({ ...form, withholdingTaxPercent: Math.round(parseFloat(e.target.value || '0') * 100) })}
-                  style={{ direction: 'ltr' }}
-                  placeholder="לדוגמה: 20"
-                />
-              </div>
-            )}
-
             {form.documentType === 'CREDIT_NOTE' && (
               <Input
                 label="מזהה מסמך מקורי"
@@ -522,7 +439,7 @@ export default function DocumentCreate() {
             )}
           </Card>
 
-          {/* Items */}
+          {/* Items — BEFORE payment details */}
           <Card style={{ marginBottom: 20 }}>
             <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: 'var(--accent-primary)' }}>
               פריטים
@@ -577,6 +494,11 @@ export default function DocumentCreate() {
                 </div>
                 <p style={{ fontSize: 13, color: 'var(--text-secondary)', textAlign: 'left' }} className="tabular-nums">
                   סה"כ שורה: {currSymbol}{(calcLineTotal(item) / 100).toFixed(2)}
+                  {isForeignCurrency && exchangeRate && (
+                    <span style={{ color: 'var(--text-muted)', marginRight: 8 }}>
+                      {' '}(₪{(Math.round(calcLineTotal(item) * exchangeRate) / 100).toFixed(2)})
+                    </span>
+                  )}
                 </p>
               </div>
             ))}
@@ -584,6 +506,80 @@ export default function DocumentCreate() {
               + הוסף פריט
             </Button>
           </Card>
+
+          {/* Payment details — only for receipts, AFTER items */}
+          {isReceipt && (
+            <Card style={{ marginBottom: 20 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, color: 'var(--accent-primary)' }}>
+                פרטי תשלום
+              </h2>
+              <Select
+                label="אמצעי תשלום"
+                value={form.paymentMethod}
+                onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
+                options={[
+                  { value: '', label: 'לא צוין' },
+                  { value: 'CASH', label: 'מזומן' },
+                  { value: 'CHECK', label: 'שיק' },
+                  { value: 'BANK_TRANSFER', label: 'העברה בנקאית' },
+                  { value: 'CREDIT_CARD', label: 'כרטיס אשראי' },
+                  { value: 'OTHER', label: 'אחר' },
+                ]}
+              />
+
+              {form.paymentMethod === 'CHECK' && (
+                <Input
+                  label="מספר שיק / אסמכתא"
+                  value={form.paymentReference}
+                  onChange={(e) => setForm({ ...form, paymentReference: e.target.value })}
+                />
+              )}
+
+              {/* Payer bank details — mandatory for bank transfer and check */}
+              {showPayerBank && (
+                <div style={{
+                  padding: 12, background: 'var(--bg-primary)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  marginTop: 8,
+                }}>
+                  <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--text-secondary)' }}>
+                    פרטי חשבון בנק משלם *
+                  </p>
+                  <Input
+                    label="שם בנק *"
+                    value={form.payerBankName}
+                    onChange={(e) => setForm({ ...form, payerBankName: e.target.value })}
+                    placeholder="לדוגמה: הפועלים"
+                  />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <Input
+                      label="מספר סניף"
+                      value={form.payerBankBranch}
+                      onChange={(e) => setForm({ ...form, payerBankBranch: e.target.value })}
+                    />
+                    <Input
+                      label="מספר חשבון"
+                      value={form.payerBankAccount}
+                      onChange={(e) => setForm({ ...form, payerBankAccount: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Withholding tax */}
+              <div style={{ marginTop: 12 }}>
+                <Input
+                  label="ניכוי מס במקור (%)"
+                  type="number"
+                  value={form.withholdingTaxPercent / 100}
+                  onChange={(e) => setForm({ ...form, withholdingTaxPercent: Math.round(parseFloat(e.target.value || '0') * 100) })}
+                  style={{ direction: 'ltr' }}
+                  placeholder="לדוגמה: 20"
+                />
+              </div>
+            </Card>
+          )}
 
           {/* Notes */}
           <Card style={{ marginBottom: 20 }}>
@@ -626,7 +622,12 @@ export default function DocumentCreate() {
                   fontSize: 14,
                 }}>
                   <span>{item.description}</span>
-                  <span className="tabular-nums">{currSymbol}{(calcLineTotal(item) / 100).toFixed(2)}</span>
+                  <span className="tabular-nums">
+                    {isForeignCurrency && exchangeRate
+                      ? `₪${(Math.round(calcLineTotal(item) * exchangeRate) / 100).toFixed(2)}`
+                      : `₪${(calcLineTotal(item) / 100).toFixed(2)}`
+                    }
+                  </span>
                 </div>
               ))}
             </div>
@@ -634,12 +635,22 @@ export default function DocumentCreate() {
             <div style={{ borderTop: '2px solid var(--border)', paddingTop: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}>
                 <span style={{ color: 'var(--text-secondary)' }}>סכום ביניים:</span>
-                <span className="tabular-nums">{currSymbol}{(subtotal / 100).toFixed(2)}</span>
+                <span className="tabular-nums">
+                  ₪{isForeignCurrency && ilsSubtotal !== null
+                    ? (ilsSubtotal / 100).toFixed(2)
+                    : (subtotal / 100).toFixed(2)
+                  }
+                </span>
               </div>
               {effectiveVatRate > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}>
                   <span style={{ color: 'var(--text-secondary)' }}>מע"מ ({effectiveVatRate}%):</span>
-                  <span className="tabular-nums">{currSymbol}{(vatAmount / 100).toFixed(2)}</span>
+                  <span className="tabular-nums">
+                    ₪{isForeignCurrency && ilsVatAmount !== null
+                      ? (ilsVatAmount / 100).toFixed(2)
+                      : (vatAmount / 100).toFixed(2)
+                    }
+                  </span>
                 </div>
               )}
               <div style={{
@@ -648,36 +659,48 @@ export default function DocumentCreate() {
                 borderTop: '2px solid var(--accent-primary)', marginTop: 8,
               }}>
                 <span>סה"כ:</span>
-                <span className="tabular-nums">{currSymbol}{(total / 100).toFixed(2)}</span>
+                <span className="tabular-nums">
+                  ₪{isForeignCurrency && ilsTotal !== null
+                    ? (ilsTotal / 100).toFixed(2)
+                    : (total / 100).toFixed(2)
+                  }
+                </span>
               </div>
+
+              {/* Original currency note */}
+              {isForeignCurrency && exchangeRate && (
+                <div style={{
+                  fontSize: 12, color: 'var(--text-muted)', padding: '4px 0',
+                }}>
+                  סכום מקורי: {currSymbol}{(total / 100).toFixed(2)} | שער: {exchangeRate.toFixed(4)}
+                </div>
+              )}
 
               {/* Withholding tax in summary */}
               {form.withholdingTaxPercent > 0 && (
                 <>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14, color: 'var(--error)' }}>
                     <span>ניכוי מס במקור ({(form.withholdingTaxPercent / 100).toFixed(1)}%):</span>
-                    <span className="tabular-nums">-{currSymbol}{(withholdingAmount / 100).toFixed(2)}</span>
+                    <span className="tabular-nums">
+                      -₪{isForeignCurrency && exchangeRate
+                        ? (Math.round(withholdingAmount * exchangeRate) / 100).toFixed(2)
+                        : (withholdingAmount / 100).toFixed(2)
+                      }
+                    </span>
                   </div>
                   <div style={{
                     display: 'flex', justifyContent: 'space-between', padding: '8px 0',
                     fontSize: 16, fontWeight: 600,
                   }}>
                     <span>לתשלום בפועל:</span>
-                    <span className="tabular-nums">{currSymbol}{(netAfterTax / 100).toFixed(2)}</span>
+                    <span className="tabular-nums">
+                      ₪{isForeignCurrency && exchangeRate
+                        ? (Math.round(netAfterTax * exchangeRate) / 100).toFixed(2)
+                        : (netAfterTax / 100).toFixed(2)
+                      }
+                    </span>
                   </div>
                 </>
-              )}
-
-              {/* ILS equivalent */}
-              {form.currency !== 'ILS' && exchangeRate && ilsTotal !== null && (
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', padding: '6px 0',
-                  fontSize: 13, color: 'var(--text-muted)',
-                  borderTop: '1px dashed var(--border)', marginTop: 4,
-                }}>
-                  <span>שווי ערך בשקלים:</span>
-                  <span className="tabular-nums">₪{(ilsTotal / 100).toFixed(2)}</span>
-                </div>
               )}
             </div>
 

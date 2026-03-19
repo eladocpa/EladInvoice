@@ -54,12 +54,16 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
   const docTypeName = getDocumentTypeName(business, document.documentType);
   const isOsekPatur = business.businessType === 'OSEK_PATUR';
   const currencySymbol = getCurrencySymbol(document.currency);
+  const isForeignCurrency = document.currency !== 'ILS' && document.exchangeRate;
+  const rate = document.exchangeRate ? intToRate(document.exchangeRate) : 1;
 
+  // For foreign currency: show original + ILS in items table
   const itemsHtml = document.items.map((item, index) => {
     const qty = item.quantity / 100;
     const price = item.unitPrice / 100;
     const discount = item.discountPercent / 100;
     const lineTotal = item.lineTotal / 100;
+    const ilsLineTotal = isForeignCurrency ? (lineTotal * rate).toFixed(2) : null;
 
     return `
       <tr>
@@ -68,35 +72,45 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
         <td>${qty}</td>
         <td>${currencySymbol}${price.toFixed(2)}</td>
         <td>${discount > 0 ? discount.toFixed(1) + '%' : '-'}</td>
-        <td>${currencySymbol}${lineTotal.toFixed(2)}</td>
+        <td>${isForeignCurrency
+          ? `₪${ilsLineTotal} <span style="font-size:11px;color:#999">(${currencySymbol}${lineTotal.toFixed(2)})</span>`
+          : `₪${lineTotal.toFixed(2)}`
+        }</td>
       </tr>
     `;
   }).join('');
 
   // Exchange rate info
   let exchangeRateHtml = '';
-  if (document.exchangeRate && document.currency !== 'ILS') {
-    const rate = intToRate(document.exchangeRate);
+  if (isForeignCurrency) {
     const currName = CURRENCY_NAMES[document.currency] || document.currency;
     exchangeRateHtml = `
     <div class="exchange-info">
       <strong>שער חליפין:</strong> 1 ${currName} = ₪${rate.toFixed(4)}
-      ${document.ilsTotal ? ` | <strong>סה"כ בשקלים:</strong> ${formatCurrency(document.ilsTotal, 'ILS')}` : ''}
     </div>`;
   }
 
-  // Withholding tax info
+  // Totals in ILS
+  const displaySubtotal = isForeignCurrency ? Math.round(document.subtotal * rate) : document.subtotal;
+  const displayVatAmount = isForeignCurrency ? Math.round(document.vatAmount * rate) : document.vatAmount;
+  const displayTotal = isForeignCurrency ? (document.ilsTotal || Math.round(document.total * rate)) : document.total;
+
+  // Withholding tax info (always in ILS)
   let withholdingHtml = '';
   if (document.withholdingTaxPercent && document.withholdingTaxAmount) {
     const pct = document.withholdingTaxPercent / 100;
+    const displayWithholding = isForeignCurrency ? Math.round(document.withholdingTaxAmount * rate) : document.withholdingTaxAmount;
+    const displayNetAfterTax = isForeignCurrency
+      ? Math.round((document.netAfterTax || (document.total - document.withholdingTaxAmount)) * rate)
+      : (document.netAfterTax || (document.total - document.withholdingTaxAmount));
     withholdingHtml = `
       <div class="totals-row">
         <span>ניכוי מס במקור (${pct.toFixed(1)}%):</span>
-        <span>-${formatCurrency(document.withholdingTaxAmount, document.currency)}</span>
+        <span>-${formatCurrency(displayWithholding, 'ILS')}</span>
       </div>
       <div class="totals-row total">
         <span>לתשלום בפועל:</span>
-        <span>${formatCurrency(document.netAfterTax || (document.total - document.withholdingTaxAmount), document.currency)}</span>
+        <span>${formatCurrency(displayNetAfterTax, 'ILS')}</span>
       </div>`;
   }
 
@@ -334,17 +348,22 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
     <div class="totals">
       <div class="totals-row">
         <span>סכום ביניים:</span>
-        <span>${formatCurrency(document.subtotal, document.currency)}</span>
+        <span>${formatCurrency(displaySubtotal, 'ILS')}</span>
       </div>
       ${(!isOsekPatur && !document.noVat) ? `
       <div class="totals-row">
         <span>מע"מ (${document.vatRate}%):</span>
-        <span>${formatCurrency(document.vatAmount, document.currency)}</span>
+        <span>${formatCurrency(displayVatAmount, 'ILS')}</span>
       </div>` : ''}
       <div class="totals-row total">
         <span>סה"כ לתשלום:</span>
-        <span>${formatCurrency(document.total, document.currency)}</span>
+        <span>${formatCurrency(displayTotal, 'ILS')}</span>
       </div>
+      ${isForeignCurrency ? `
+      <div class="totals-row" style="font-size: 11px; color: #999;">
+        <span>סכום מקורי:</span>
+        <span>${formatCurrency(document.total, document.currency)}</span>
+      </div>` : ''}
       ${withholdingHtml}
     </div>
 
