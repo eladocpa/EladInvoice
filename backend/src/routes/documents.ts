@@ -17,6 +17,7 @@ import {
   getAllocationThreshold,
   testAllocationConnection,
 } from '../services/allocation';
+import { getExchangeRate, rateToInt } from '../services/exchange-rate';
 import { DocumentType } from '@prisma/client';
 
 const router = Router();
@@ -40,7 +41,7 @@ const createDocumentSchema = z.object({
   customerId: z.string().uuid().optional().nullable(),
   issueDate: z.string(),
   dueDate: z.string().optional().nullable(),
-  currency: z.enum(['ILS', 'USD', 'EUR']).default('ILS'),
+  currency: z.enum(['ILS', 'USD', 'EUR', 'BTC', 'ETH', 'USDT', 'USDC']).default('ILS'),
   notes: z.string().optional(),
   paymentMethod: z.enum(['CASH', 'CHECK', 'BANK_TRANSFER', 'CREDIT_CARD', 'OTHER']).optional().nullable(),
   paymentReference: z.string().optional(),
@@ -48,6 +49,12 @@ const createDocumentSchema = z.object({
   originalDocumentId: z.string().uuid().optional().nullable(),
   asDraft: z.boolean().default(false),
   allocationAction: z.enum(['request', 'continue_without', 'cancel', 'reverse_charge']).optional(),
+  // New fields
+  noVat: z.boolean().default(false),
+  withholdingTaxPercent: z.number().int().min(0).max(10000).optional().nullable(),
+  payerBankName: z.string().optional().nullable(),
+  payerBankBranch: z.string().optional().nullable(),
+  payerBankAccount: z.string().optional().nullable(),
 });
 
 // List documents
@@ -150,7 +157,8 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
 
     const { documentType, customerId, issueDate, dueDate, currency, notes,
             paymentMethod, paymentReference, items, originalDocumentId, asDraft,
-            allocationAction } = req.body;
+            allocationAction, noVat, withholdingTaxPercent,
+            payerBankName, payerBankBranch, payerBankAccount } = req.body;
 
     // Validate document type for business type
     const isOsekPatur = business.businessType === 'OSEK_PATUR';
@@ -171,12 +179,36 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
       lineTotal: calculateLineTotal(item.quantity, item.unitPrice, item.discountPercent),
     }));
 
-    const vatRate = isOsekPatur ? 0 : getVatRate();
+    // If noVat is set (for osek murshe), use 0% VAT
+    const useNoVat = noVat === true && !isOsekPatur;
+    const vatRate = (isOsekPatur || useNoVat) ? 0 : getVatRate();
     const totals = calculateDocumentTotals(
       items as Array<{ quantity: number; unitPrice: number; discountPercent: number }>,
-      isOsekPatur,
+      isOsekPatur || useNoVat,
       vatRate,
     );
+
+    // Calculate withholding tax if applicable
+    let withholdingTaxAmount: number | null = null;
+    let netAfterTax: number | null = null;
+    if (withholdingTaxPercent && withholdingTaxPercent > 0) {
+      withholdingTaxAmount = Math.round(totals.total * withholdingTaxPercent / 10000);
+      netAfterTax = totals.total - withholdingTaxAmount;
+    }
+
+    // Fetch exchange rate for foreign currencies
+    let exchangeRateInt: number | null = null;
+    let ilsTotal: number | null = null;
+    if (currency !== 'ILS') {
+      try {
+        const rate = await getExchangeRate(currency);
+        exchangeRateInt = rateToInt(rate);
+        ilsTotal = Math.round(totals.total * rate);
+      } catch (err) {
+        console.error('Exchange rate fetch error:', err);
+        // Continue without exchange rate — not a blocking error
+      }
+    }
 
     // Get customer if specified
     let customer = null;
@@ -223,6 +255,15 @@ router.post('/', validate(createDocumentSchema), async (req: Request, res: Respo
         vatAmount: totals.vatAmount,
         total: totals.total,
         vatRate,
+        noVat: useNoVat,
+        exchangeRate: exchangeRateInt,
+        ilsTotal,
+        withholdingTaxPercent: withholdingTaxPercent || null,
+        withholdingTaxAmount,
+        netAfterTax,
+        payerBankName: payerBankName || null,
+        payerBankBranch: payerBankBranch || null,
+        payerBankAccount: payerBankAccount || null,
         notes,
         paymentMethod: paymentMethod || null,
         paymentReference,
@@ -598,6 +639,21 @@ router.post('/test-allocation', async (req: Request, res: Response) => {
 // Get allocation info
 router.get('/allocation-info', async (_req: Request, res: Response) => {
   res.json({ threshold: getAllocationThreshold() });
+});
+
+// Get exchange rate for a currency
+router.get('/exchange-rate/:currency', async (req: Request, res: Response) => {
+  try {
+    const currency = String(req.params.currency).toUpperCase();
+    if (currency === 'ILS') {
+      res.json({ currency, rate: 1, rateInt: 10000 });
+      return;
+    }
+    const rate = await getExchangeRate(currency);
+    res.json({ currency, rate, rateInt: rateToInt(rate) });
+  } catch {
+    res.status(500).json({ error: 'שגיאה בקבלת שער חליפין' });
+  }
 });
 
 // Mark as paid

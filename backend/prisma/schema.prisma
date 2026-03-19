@@ -38,6 +38,10 @@ enum Currency {
   ILS
   USD
   EUR
+  BTC
+  ETH
+  USDT
+  USDC
 }
 
 enum PaymentMethod {
@@ -150,6 +154,23 @@ model Document {
   vatAmount Int @default(0) @map("vat_amount")
   total     Int @default(0)
   vatRate   Int @default(18) @map("vat_rate")
+
+  // Exchange rate to ILS (stored as rate * 10000 for precision, e.g. 3.65 = 36500)
+  exchangeRate     Int?           @map("exchange_rate")
+  ilsTotal         Int?           @map("ils_total") // total in ILS agorot when foreign currency
+
+  // Withholding tax (ניכוי מס במקור)
+  withholdingTaxPercent Int?      @map("withholding_tax_percent") // stored as percent * 100
+  withholdingTaxAmount  Int?      @map("withholding_tax_amount") // in agorot
+  netAfterTax          Int?       @map("net_after_tax") // total - withholding in agorot
+
+  // No VAT flag (for osek murshe choosing to issue without VAT)
+  noVat            Boolean        @default(false) @map("no_vat")
+
+  // Payer bank details (for bank transfer / check payments)
+  payerBankName    String?        @map("payer_bank_name")
+  payerBankBranch  String?        @map("payer_bank_branch")
+  payerBankAccount String?        @map("payer_bank_account")
 
   notes            String?
   paymentMethod    PaymentMethod? @map("payment_method")

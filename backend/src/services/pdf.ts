@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Business, Document, DocumentItem, Customer } from '@prisma/client';
 import { formatCurrency } from '../utils/tax.utils';
+import { intToRate } from './exchange-rate';
 
 type DocumentWithRelations = Document & {
   customer: Customer | null;
@@ -24,6 +25,24 @@ const PAYMENT_METHOD_NAMES: Record<string, string> = {
   OTHER: 'אחר',
 };
 
+const CURRENCY_NAMES: Record<string, string> = {
+  ILS: 'שקל',
+  USD: 'דולר',
+  EUR: 'אירו',
+  BTC: 'ביטקוין',
+  ETH: 'את\'ריום',
+  USDT: 'USDT',
+  USDC: 'USDC',
+};
+
+function getCurrencySymbol(currency: string): string {
+  const symbols: Record<string, string> = {
+    ILS: '₪', USD: '$', EUR: '€',
+    BTC: '₿', ETH: 'Ξ', USDT: '₮', USDC: '$',
+  };
+  return symbols[currency] || currency;
+}
+
 function getDocumentTypeName(business: Business, docType: string): string {
   if (business.businessType === 'OSEK_MURSHE' && docType === 'INVOICE') {
     return 'חשבונית מס';
@@ -34,7 +53,7 @@ function getDocumentTypeName(business: Business, docType: string): string {
 function generateHtml(document: DocumentWithRelations, business: Business): string {
   const docTypeName = getDocumentTypeName(business, document.documentType);
   const isOsekPatur = business.businessType === 'OSEK_PATUR';
-  const currencySymbol = document.currency === 'USD' ? '$' : document.currency === 'EUR' ? '€' : '₪';
+  const currencySymbol = getCurrencySymbol(document.currency);
 
   const itemsHtml = document.items.map((item, index) => {
     const qty = item.quantity / 100;
@@ -53,6 +72,51 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
       </tr>
     `;
   }).join('');
+
+  // Exchange rate info
+  let exchangeRateHtml = '';
+  if (document.exchangeRate && document.currency !== 'ILS') {
+    const rate = intToRate(document.exchangeRate);
+    const currName = CURRENCY_NAMES[document.currency] || document.currency;
+    exchangeRateHtml = `
+    <div class="exchange-info">
+      <strong>שער חליפין:</strong> 1 ${currName} = ₪${rate.toFixed(4)}
+      ${document.ilsTotal ? ` | <strong>סה"כ בשקלים:</strong> ${formatCurrency(document.ilsTotal, 'ILS')}` : ''}
+    </div>`;
+  }
+
+  // Withholding tax info
+  let withholdingHtml = '';
+  if (document.withholdingTaxPercent && document.withholdingTaxAmount) {
+    const pct = document.withholdingTaxPercent / 100;
+    withholdingHtml = `
+      <div class="totals-row">
+        <span>ניכוי מס במקור (${pct.toFixed(1)}%):</span>
+        <span>-${formatCurrency(document.withholdingTaxAmount, document.currency)}</span>
+      </div>
+      <div class="totals-row total">
+        <span>לתשלום בפועל:</span>
+        <span>${formatCurrency(document.netAfterTax || (document.total - document.withholdingTaxAmount), document.currency)}</span>
+      </div>`;
+  }
+
+  // Payer bank info
+  let payerBankHtml = '';
+  if (document.payerBankName) {
+    payerBankHtml = `
+    <div class="payment-info">
+      <strong>פרטי חשבון בנק משלם:</strong>
+      ${document.payerBankName}
+      ${document.payerBankBranch ? ` | סניף: ${document.payerBankBranch}` : ''}
+      ${document.payerBankAccount ? ` | חשבון: ${document.payerBankAccount}` : ''}
+    </div>`;
+  }
+
+  // Generation date footer
+  const generatedAt = new Date().toLocaleString('he-IL', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
 
   return `<!DOCTYPE html>
 <html dir="rtl" lang="he">
@@ -166,6 +230,14 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
       font-size: 13px;
     }
 
+    .exchange-info {
+      background: #f3f0ff;
+      padding: 12px 15px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      font-size: 13px;
+    }
+
     .notes {
       padding: 10px 15px;
       background: #fff9e6;
@@ -193,6 +265,15 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
       border-radius: 8px;
       font-size: 12px;
       margin-bottom: 15px;
+    }
+
+    .doc-footer {
+      text-align: center;
+      font-size: 9px;
+      color: #bbb;
+      margin-top: 30px;
+      padding-top: 10px;
+      border-top: 1px solid #f0f0f0;
     }
   </style>
 </head>
@@ -255,7 +336,7 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
         <span>סכום ביניים:</span>
         <span>${formatCurrency(document.subtotal, document.currency)}</span>
       </div>
-      ${!isOsekPatur ? `
+      ${(!isOsekPatur && !document.noVat) ? `
       <div class="totals-row">
         <span>מע"מ (${document.vatRate}%):</span>
         <span>${formatCurrency(document.vatAmount, document.currency)}</span>
@@ -264,13 +345,18 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
         <span>סה"כ לתשלום:</span>
         <span>${formatCurrency(document.total, document.currency)}</span>
       </div>
+      ${withholdingHtml}
     </div>
+
+    ${exchangeRateHtml}
 
     ${document.paymentMethod ? `
     <div class="payment-info">
       <strong>אמצעי תשלום:</strong> ${PAYMENT_METHOD_NAMES[document.paymentMethod] || document.paymentMethod}
       ${document.paymentReference ? ` | <strong>אסמכתא:</strong> ${document.paymentReference}` : ''}
     </div>` : ''}
+
+    ${payerBankHtml}
 
     ${business.bankName ? `
     <div class="bank-info">
@@ -294,9 +380,14 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
 
     <div class="legal">
       ${isOsekPatur ? '<p class="warning">אינני רשום כעוסק מורשה, העסקה פטורה ממע"מ</p>' : ''}
+      ${document.noVat && !isOsekPatur ? '<p class="warning">מסמך ללא מע"מ</p>' : ''}
       ${document.documentType === 'CREDIT_NOTE' && document.originalDocumentId ?
         `<p>חשבונית זיכוי למסמך מקורי מספר: ${document.originalDocumentId}</p>` : ''}
       <p>מסמך זה הופק באמצעות מערכת EladInvoice</p>
+    </div>
+
+    <div class="doc-footer">
+      מסמך זה הופק בתאריך ${generatedAt}
     </div>
   </div>
 </body>

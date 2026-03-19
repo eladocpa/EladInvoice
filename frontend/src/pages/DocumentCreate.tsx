@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api, { Customer } from '../lib/api';
 import { useAuth } from '../hooks/useAuth';
@@ -28,8 +28,26 @@ const DOC_TYPES_OSEK_MURSHE = [
   { value: 'CREDIT_NOTE', label: 'חשבונית זיכוי' },
 ];
 
+const CURRENCY_OPTIONS = [
+  { value: 'ILS', label: '₪ שקל' },
+  { value: 'USD', label: '$ דולר' },
+  { value: 'EUR', label: '€ אירו' },
+  { value: 'BTC', label: '₿ ביטקוין' },
+  { value: 'ETH', label: 'Ξ את\'ריום' },
+  { value: 'USDT', label: '₮ USDT' },
+  { value: 'USDC', label: '$ USDC' },
+];
+
 function roundHalfUp(v: number): number {
   return Math.floor(v + 0.5);
+}
+
+function getCurrencySymbol(currency: string): string {
+  const symbols: Record<string, string> = {
+    ILS: '₪', USD: '$', EUR: '€',
+    BTC: '₿', ETH: 'Ξ', USDT: '₮', USDC: '$',
+  };
+  return symbols[currency] || currency;
 }
 
 export default function DocumentCreate() {
@@ -42,6 +60,18 @@ export default function DocumentCreate() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Quick customer creation
+  const [showNewCustomer, setShowNewCustomer] = useState(false);
+  const [newCustomer, setNewCustomer] = useState({ name: '', taxId: '', phone: '', email: '' });
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
+
+  // Customer mode: 'select' | 'occasional' | 'new'
+  const [customerMode, setCustomerMode] = useState<'select' | 'occasional' | 'new'>('select');
+
+  // Exchange rate
+  const [exchangeRate, setExchangeRate] = useState<number | null>(null);
+  const [fetchingRate, setFetchingRate] = useState(false);
+
   const [form, setForm] = useState({
     documentType: searchParams.get('type') || 'INVOICE',
     customerId: '',
@@ -53,6 +83,11 @@ export default function DocumentCreate() {
     paymentReference: '',
     asDraft: false,
     originalDocumentId: '',
+    noVat: false,
+    withholdingTaxPercent: 0,
+    payerBankName: '',
+    payerBankBranch: '',
+    payerBankAccount: '',
   });
 
   const [items, setItems] = useState<LineItem[]>([
@@ -62,6 +97,28 @@ export default function DocumentCreate() {
   useEffect(() => {
     api.get('/customers').then(({ data }) => setCustomers(data)).catch(() => {});
   }, []);
+
+  // Fetch exchange rate when currency changes
+  const fetchExchangeRate = useCallback(async (currency: string) => {
+    if (currency === 'ILS') {
+      setExchangeRate(null);
+      return;
+    }
+    setFetchingRate(true);
+    try {
+      const { data } = await api.get(`/documents/exchange-rate/${currency}`);
+      setExchangeRate(data.rate);
+    } catch {
+      toast.error('לא ניתן לקבל שער חליפין');
+      setExchangeRate(null);
+    } finally {
+      setFetchingRate(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchExchangeRate(form.currency);
+  }, [form.currency, fetchExchangeRate]);
 
   const addItem = () => {
     setItems([...items, { description: '', quantity: 100, unitPrice: 0, discountPercent: 0 }]);
@@ -86,8 +143,43 @@ export default function DocumentCreate() {
   };
 
   const subtotal = items.reduce((sum, item) => sum + calcLineTotal(item), 0);
-  const vatAmount = isOsekPatur ? 0 : roundHalfUp(subtotal * vatRate / 100);
+  const useNoVat = form.noVat && !isOsekPatur;
+  const effectiveVatRate = (isOsekPatur || useNoVat) ? 0 : vatRate;
+  const vatAmount = effectiveVatRate === 0 ? 0 : roundHalfUp(subtotal * effectiveVatRate / 100);
   const total = subtotal + vatAmount;
+
+  // Withholding tax
+  const withholdingAmount = form.withholdingTaxPercent > 0
+    ? Math.round(total * form.withholdingTaxPercent / 10000)
+    : 0;
+  const netAfterTax = total - withholdingAmount;
+
+  // ILS equivalent
+  const ilsTotal = exchangeRate ? Math.round(total * exchangeRate) : null;
+
+  const currSymbol = getCurrencySymbol(form.currency);
+
+  // Quick create customer
+  const handleCreateCustomer = async () => {
+    if (!newCustomer.name || newCustomer.name.length < 2) {
+      toast.error('שם לקוח חייב להכיל לפחות 2 תווים');
+      return;
+    }
+    setCreatingCustomer(true);
+    try {
+      const { data } = await api.post('/customers', newCustomer);
+      setCustomers(prev => [...prev, data]);
+      setForm(prev => ({ ...prev, customerId: data.id }));
+      setCustomerMode('select');
+      setShowNewCustomer(false);
+      setNewCustomer({ name: '', taxId: '', phone: '', email: '' });
+      toast.success('לקוח נוצר בהצלחה');
+    } catch {
+      toast.error('שגיאה ביצירת לקוח');
+    } finally {
+      setCreatingCustomer(false);
+    }
+  };
 
   const handleSubmit = async (asDraft: boolean) => {
     if (items.some(i => !i.description || i.unitPrice <= 0)) {
@@ -100,10 +192,14 @@ export default function DocumentCreate() {
       const { data } = await api.post('/documents', {
         ...form,
         asDraft,
-        customerId: form.customerId || null,
+        customerId: customerMode === 'occasional' ? null : (form.customerId || null),
         dueDate: form.dueDate || null,
         paymentMethod: form.paymentMethod || null,
         originalDocumentId: form.originalDocumentId || null,
+        withholdingTaxPercent: form.withholdingTaxPercent > 0 ? form.withholdingTaxPercent : null,
+        payerBankName: form.payerBankName || null,
+        payerBankBranch: form.payerBankBranch || null,
+        payerBankAccount: form.payerBankAccount || null,
         items: items.map((item, i) => ({
           ...item,
           vatIncluded: false,
@@ -112,7 +208,6 @@ export default function DocumentCreate() {
       });
 
       if (data.allocationPending) {
-        // Allocation failed — navigate to document view for user decision
         toast.error(data.allocationResult?.errorMessage || 'רשות המסים דחתה את הבקשה — יש לבחור פעולה');
         navigate(`/documents/${data.id}`);
       } else {
@@ -133,6 +228,8 @@ export default function DocumentCreate() {
   };
 
   const docTypes = isOsekPatur ? DOC_TYPES_OSEK_PATUR : DOC_TYPES_OSEK_MURSHE;
+  const isReceipt = ['RECEIPT', 'RECEIPT_INVOICE'].includes(form.documentType);
+  const showPayerBank = ['BANK_TRANSFER', 'CHECK'].includes(form.paymentMethod);
 
   return (
     <div>
@@ -151,15 +248,113 @@ export default function DocumentCreate() {
               onChange={(e) => setForm({ ...form, documentType: e.target.value })}
               options={docTypes}
             />
-            <Select
-              label="לקוח"
-              value={form.customerId}
-              onChange={(e) => setForm({ ...form, customerId: e.target.value })}
-              options={[
-                { value: '', label: 'בחר לקוח (אופציונלי)' },
-                ...customers.map(c => ({ value: c.id, label: c.name })),
-              ]}
-            />
+
+            {/* Customer selection with quick create */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 6, color: 'var(--text-secondary)' }}>
+                לקוח
+              </label>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <button
+                  onClick={() => { setCustomerMode('select'); setShowNewCustomer(false); }}
+                  style={{
+                    flex: 1, padding: '8px 12px', fontSize: 13, borderRadius: 'var(--radius-xs)',
+                    border: `1px solid ${customerMode === 'select' ? 'var(--accent-primary)' : 'var(--border)'}`,
+                    background: customerMode === 'select' ? 'var(--accent-primary)' : 'var(--bg-primary)',
+                    color: customerMode === 'select' ? 'white' : 'var(--text-primary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  לקוח קיים
+                </button>
+                <button
+                  onClick={() => { setCustomerMode('occasional'); setShowNewCustomer(false); setForm(prev => ({ ...prev, customerId: '' })); }}
+                  style={{
+                    flex: 1, padding: '8px 12px', fontSize: 13, borderRadius: 'var(--radius-xs)',
+                    border: `1px solid ${customerMode === 'occasional' ? 'var(--accent-primary)' : 'var(--border)'}`,
+                    background: customerMode === 'occasional' ? 'var(--accent-primary)' : 'var(--bg-primary)',
+                    color: customerMode === 'occasional' ? 'white' : 'var(--text-primary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  לקוח מזדמן
+                </button>
+                <button
+                  onClick={() => { setCustomerMode('new'); setShowNewCustomer(true); }}
+                  style={{
+                    flex: 1, padding: '8px 12px', fontSize: 13, borderRadius: 'var(--radius-xs)',
+                    border: `1px solid ${customerMode === 'new' ? 'var(--accent-primary)' : 'var(--border)'}`,
+                    background: customerMode === 'new' ? 'var(--accent-primary)' : 'var(--bg-primary)',
+                    color: customerMode === 'new' ? 'white' : 'var(--text-primary)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  + לקוח חדש
+                </button>
+              </div>
+
+              {customerMode === 'select' && (
+                <Select
+                  value={form.customerId}
+                  onChange={(e) => setForm({ ...form, customerId: e.target.value })}
+                  options={[
+                    { value: '', label: 'בחר לקוח (אופציונלי)' },
+                    ...customers.map(c => ({ value: c.id, label: c.name })),
+                  ]}
+                />
+              )}
+
+              {customerMode === 'occasional' && (
+                <div style={{
+                  padding: 12, background: 'rgba(255, 181, 71, 0.1)',
+                  border: '1px solid rgba(255, 181, 71, 0.3)',
+                  borderRadius: 'var(--radius-xs)', fontSize: 13, color: 'var(--warning)',
+                }}>
+                  המסמך יופק ללא פרטי לקוח (לקוח מזדמן)
+                </div>
+              )}
+
+              {customerMode === 'new' && showNewCustomer && (
+                <div style={{
+                  padding: 16, background: 'var(--bg-primary)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                }}>
+                  <Input
+                    label="שם לקוח *"
+                    value={newCustomer.name}
+                    onChange={(e) => setNewCustomer({ ...newCustomer, name: e.target.value })}
+                    placeholder="שם הלקוח"
+                  />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                    <Input
+                      label="ח.פ. / ת.ז."
+                      value={newCustomer.taxId}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, taxId: e.target.value })}
+                    />
+                    <Input
+                      label="טלפון"
+                      value={newCustomer.phone}
+                      onChange={(e) => setNewCustomer({ ...newCustomer, phone: e.target.value })}
+                    />
+                  </div>
+                  <Input
+                    label="אימייל"
+                    value={newCustomer.email}
+                    onChange={(e) => setNewCustomer({ ...newCustomer, email: e.target.value })}
+                  />
+                  <Button
+                    size="sm"
+                    onClick={handleCreateCustomer}
+                    loading={creatingCustomer}
+                    style={{ marginTop: 8 }}
+                  >
+                    צור לקוח ושייך למסמך
+                  </Button>
+                </div>
+              )}
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <Input
                 label="תאריך"
@@ -179,11 +374,7 @@ export default function DocumentCreate() {
                 label="מטבע"
                 value={form.currency}
                 onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                options={[
-                  { value: 'ILS', label: '₪ שקל' },
-                  { value: 'USD', label: '$ דולר' },
-                  { value: 'EUR', label: '€ אירו' },
-                ]}
+                options={CURRENCY_OPTIONS}
               />
               <Select
                 label="אמצעי תשלום"
@@ -199,6 +390,32 @@ export default function DocumentCreate() {
                 ]}
               />
             </div>
+
+            {/* Exchange rate display */}
+            {form.currency !== 'ILS' && (
+              <div style={{
+                padding: 10, background: 'rgba(108, 99, 255, 0.08)',
+                borderRadius: 'var(--radius-xs)', fontSize: 13,
+                marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              }}>
+                {fetchingRate ? (
+                  <span>טוען שער חליפין...</span>
+                ) : exchangeRate ? (
+                  <>
+                    <span>שער יציג: 1 {CURRENCY_OPTIONS.find(c => c.value === form.currency)?.label?.split(' ')[1]} = ₪{exchangeRate.toFixed(4)}</span>
+                    <button
+                      onClick={() => fetchExchangeRate(form.currency)}
+                      style={{ background: 'none', border: 'none', color: 'var(--accent-primary)', cursor: 'pointer', fontSize: 12 }}
+                    >
+                      רענן שער
+                    </button>
+                  </>
+                ) : (
+                  <span style={{ color: 'var(--warning)' }}>לא ניתן לקבל שער חליפין</span>
+                )}
+              </div>
+            )}
+
             {form.paymentMethod === 'CHECK' && (
               <Input
                 label="מספר שיק / אסמכתא"
@@ -206,6 +423,76 @@ export default function DocumentCreate() {
                 onChange={(e) => setForm({ ...form, paymentReference: e.target.value })}
               />
             )}
+
+            {/* Payer bank details for bank transfer and check */}
+            {showPayerBank && (
+              <div style={{
+                padding: 12, background: 'var(--bg-primary)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)',
+                marginBottom: 12,
+              }}>
+                <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8, color: 'var(--text-secondary)' }}>
+                  פרטי חשבון בנק משלם
+                </p>
+                <Input
+                  label="שם בנק"
+                  value={form.payerBankName}
+                  onChange={(e) => setForm({ ...form, payerBankName: e.target.value })}
+                  placeholder="לדוגמה: הפועלים"
+                />
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <Input
+                    label="מספר סניף"
+                    value={form.payerBankBranch}
+                    onChange={(e) => setForm({ ...form, payerBankBranch: e.target.value })}
+                  />
+                  <Input
+                    label="מספר חשבון"
+                    value={form.payerBankAccount}
+                    onChange={(e) => setForm({ ...form, payerBankAccount: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* No VAT checkbox — only for osek murshe on invoices */}
+            {!isOsekPatur && ['INVOICE', 'RECEIPT_INVOICE'].includes(form.documentType) && (
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                fontSize: 14, cursor: 'pointer', marginBottom: 12,
+                padding: 10, background: 'var(--bg-primary)',
+                borderRadius: 'var(--radius-xs)', border: '1px solid var(--border)',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={form.noVat}
+                  onChange={(e) => setForm({ ...form, noVat: e.target.checked })}
+                  style={{ width: 18, height: 18 }}
+                />
+                <span>מסמך ללא מע"מ</span>
+              </label>
+            )}
+
+            {/* Withholding tax — for receipts */}
+            {isReceipt && (
+              <div style={{
+                padding: 12, background: 'var(--bg-primary)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-sm)',
+                marginBottom: 12,
+              }}>
+                <Input
+                  label="ניכוי מס במקור (%)"
+                  type="number"
+                  value={form.withholdingTaxPercent / 100}
+                  onChange={(e) => setForm({ ...form, withholdingTaxPercent: Math.round(parseFloat(e.target.value || '0') * 100) })}
+                  style={{ direction: 'ltr' }}
+                  placeholder="לדוגמה: 20"
+                />
+              </div>
+            )}
+
             {form.documentType === 'CREDIT_NOTE' && (
               <Input
                 label="מזהה מסמך מקורי"
@@ -255,7 +542,7 @@ export default function DocumentCreate() {
                     style={{ direction: 'ltr' }}
                   />
                   <Input
-                    label="מחיר (₪)"
+                    label={`מחיר (${currSymbol})`}
                     type="number"
                     value={item.unitPrice / 100}
                     onChange={(e) => updateItem(index, 'unitPrice', Math.round(parseFloat(e.target.value || '0') * 100))}
@@ -270,7 +557,7 @@ export default function DocumentCreate() {
                   />
                 </div>
                 <p style={{ fontSize: 13, color: 'var(--text-secondary)', textAlign: 'left' }} className="tabular-nums">
-                  סה"כ שורה: ₪{(calcLineTotal(item) / 100).toFixed(2)}
+                  סה"כ שורה: {currSymbol}{(calcLineTotal(item) / 100).toFixed(2)}
                 </p>
               </div>
             ))}
@@ -320,7 +607,7 @@ export default function DocumentCreate() {
                   fontSize: 14,
                 }}>
                   <span>{item.description}</span>
-                  <span className="tabular-nums">₪{(calcLineTotal(item) / 100).toFixed(2)}</span>
+                  <span className="tabular-nums">{currSymbol}{(calcLineTotal(item) / 100).toFixed(2)}</span>
                 </div>
               ))}
             </div>
@@ -328,12 +615,12 @@ export default function DocumentCreate() {
             <div style={{ borderTop: '2px solid var(--border)', paddingTop: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}>
                 <span style={{ color: 'var(--text-secondary)' }}>סכום ביניים:</span>
-                <span className="tabular-nums">₪{(subtotal / 100).toFixed(2)}</span>
+                <span className="tabular-nums">{currSymbol}{(subtotal / 100).toFixed(2)}</span>
               </div>
-              {!isOsekPatur && (
+              {effectiveVatRate > 0 && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14 }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>מע"מ ({vatRate}%):</span>
-                  <span className="tabular-nums">₪{(vatAmount / 100).toFixed(2)}</span>
+                  <span style={{ color: 'var(--text-secondary)' }}>מע"מ ({effectiveVatRate}%):</span>
+                  <span className="tabular-nums">{currSymbol}{(vatAmount / 100).toFixed(2)}</span>
                 </div>
               )}
               <div style={{
@@ -342,8 +629,37 @@ export default function DocumentCreate() {
                 borderTop: '2px solid var(--accent-primary)', marginTop: 8,
               }}>
                 <span>סה"כ:</span>
-                <span className="tabular-nums">₪{(total / 100).toFixed(2)}</span>
+                <span className="tabular-nums">{currSymbol}{(total / 100).toFixed(2)}</span>
               </div>
+
+              {/* Withholding tax in summary */}
+              {form.withholdingTaxPercent > 0 && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontSize: 14, color: 'var(--error)' }}>
+                    <span>ניכוי מס במקור ({(form.withholdingTaxPercent / 100).toFixed(1)}%):</span>
+                    <span className="tabular-nums">-{currSymbol}{(withholdingAmount / 100).toFixed(2)}</span>
+                  </div>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', padding: '8px 0',
+                    fontSize: 16, fontWeight: 600,
+                  }}>
+                    <span>לתשלום בפועל:</span>
+                    <span className="tabular-nums">{currSymbol}{(netAfterTax / 100).toFixed(2)}</span>
+                  </div>
+                </>
+              )}
+
+              {/* ILS equivalent */}
+              {form.currency !== 'ILS' && exchangeRate && ilsTotal !== null && (
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', padding: '6px 0',
+                  fontSize: 13, color: 'var(--text-muted)',
+                  borderTop: '1px dashed var(--border)', marginTop: 4,
+                }}>
+                  <span>שווי ערך בשקלים:</span>
+                  <span className="tabular-nums">₪{(ilsTotal / 100).toFixed(2)}</span>
+                </div>
+              )}
             </div>
 
             {isOsekPatur && (
@@ -357,6 +673,20 @@ export default function DocumentCreate() {
                 marginTop: 12,
               }}>
                 אינני רשום כעוסק מורשה, העסקה פטורה ממע"מ
+              </div>
+            )}
+
+            {useNoVat && (
+              <div style={{
+                background: 'rgba(255, 181, 71, 0.1)',
+                border: '1px solid rgba(255, 181, 71, 0.3)',
+                borderRadius: 'var(--radius-xs)',
+                padding: 12,
+                fontSize: 12,
+                color: 'var(--warning)',
+                marginTop: 12,
+              }}>
+                מסמך ללא מע"מ
               </div>
             )}
 

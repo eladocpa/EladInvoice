@@ -78,7 +78,12 @@ export function getOsekPaturThreshold(): number {
  */
 export function formatCurrency(agorot: number, currency: string = 'ILS'): string {
   const amount = agorot / 100;
-  const symbols: Record<string, string> = { ILS: '₪', USD: '$', EUR: '€' };
+  const symbols: Record<string, string> = {
+    ILS: '₪', USD: '$', EUR: '€',
+    BTC: '₿', ETH: 'Ξ', USDT: '₮', USDC: '$',
+  };
   const symbol = symbols[currency] || currency;
-  return `${symbol}${amount.toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const isCrypto = ['BTC', 'ETH'].includes(currency);
+  const fractionDigits = isCrypto ? 8 : 2;
+  return `${symbol}${amount.toLocaleString('he-IL', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits })}`;
 }
