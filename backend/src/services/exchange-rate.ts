@@ -13,14 +13,12 @@ const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 /**
  * Get Bank of Israel representative exchange rate for USD or EUR.
- * Returns rate as float (e.g., 3.65 for USD/ILS).
+ * Uses the BOI PublicApi endpoint.
+ * Returns rate as float (e.g., 3.119 for USD/ILS).
  */
 async function fetchBoiRate(currency: 'USD' | 'EUR'): Promise<number> {
   const today = new Date().toISOString().split('T')[0];
-  // Try last 7 days to handle weekends/holidays
-  const startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  const url = `https://edge.boi.org.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI/EXR/1.0/?startperiod=${startDate}&endperiod=${today}&c[CURRENCY]=${currency}`;
+  const url = `https://boi.org.il/PublicApi/GetExchangeRates?asOf=${today}&currencyCode=${currency}`;
 
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
@@ -32,24 +30,33 @@ async function fetchBoiRate(currency: 'USD' | 'EUR'): Promise<number> {
   }
 
   const data: any = await response.json();
-  // Navigate the SDMX JSON structure to get the latest rate
-  const series = data?.data?.dataSets?.[0]?.series;
-  if (series) {
-    const seriesKey = Object.keys(series)[0];
-    const observations = series[seriesKey]?.observations;
-    if (observations) {
-      const keys = Object.keys(observations).sort((a, b) => Number(b) - Number(a));
-      if (keys.length > 0) {
-        return parseFloat(observations[keys[0]][0]);
-      }
+
+  // The API returns an array of exchange rate objects
+  if (Array.isArray(data) && data.length > 0) {
+    const rateObj = data[0];
+    if (typeof rateObj.currentExchangeRate === 'number') {
+      return rateObj.currentExchangeRate;
     }
+    // Try alternate field names
+    if (typeof rateObj.rate === 'number') {
+      return rateObj.rate;
+    }
+    if (typeof rateObj.value === 'number') {
+      return rateObj.value;
+    }
+  }
+
+  // If the response is a single object
+  if (data && typeof data.currentExchangeRate === 'number') {
+    return data.currentExchangeRate;
   }
 
   throw new Error('Could not parse BOI exchange rate response');
 }
 
 /**
- * Fetch crypto rate in ILS from CoinGecko free API.
+ * Fetch crypto rate in ILS.
+ * First tries CoinGecko, falls back to calculating via USD rate.
  */
 async function fetchCryptoRate(crypto: 'BTC' | 'ETH' | 'USDT' | 'USDC'): Promise<number> {
   const coinIds: Record<string, string> = {
@@ -60,23 +67,45 @@ async function fetchCryptoRate(crypto: 'BTC' | 'ETH' | 'USDT' | 'USDC'): Promise
   };
 
   const coinId = coinIds[crypto];
-  const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=ils`;
 
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(10000),
-  });
+  // Try CoinGecko with ILS directly
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=ils`;
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(10000),
+    });
 
-  if (!response.ok) {
-    throw new Error(`CoinGecko API error: ${response.status}`);
+    if (response.ok) {
+      const data: any = await response.json();
+      const rate = data?.[coinId]?.ils;
+      if (typeof rate === 'number') {
+        return rate;
+      }
+    }
+  } catch {
+    // Fall through to USD fallback
   }
 
-  const data: any = await response.json();
-  const rate = data?.[coinId]?.ils;
-  if (typeof rate !== 'number') {
-    throw new Error('Could not parse CoinGecko response');
+  // Fallback: get USD price and multiply by USD/ILS rate
+  try {
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd`;
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.ok) {
+      const data: any = await response.json();
+      const usdRate = data?.[coinId]?.usd;
+      if (typeof usdRate === 'number') {
+        const usdToIls = await fetchBoiRate('USD');
+        return usdRate * usdToIls;
+      }
+    }
+  } catch {
+    // Fall through
   }
 
-  return rate;
+  throw new Error(`Could not fetch rate for ${crypto}`);
 }
 
 /**

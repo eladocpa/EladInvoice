@@ -194,12 +194,13 @@ export default function DocumentCreate() {
         asDraft,
         customerId: customerMode === 'occasional' ? null : (form.customerId || null),
         dueDate: form.dueDate || null,
-        paymentMethod: form.paymentMethod || null,
+        paymentMethod: isReceipt ? (form.paymentMethod || null) : null,
+        paymentReference: isReceipt ? (form.paymentReference || null) : null,
         originalDocumentId: form.originalDocumentId || null,
-        withholdingTaxPercent: form.withholdingTaxPercent > 0 ? form.withholdingTaxPercent : null,
-        payerBankName: form.payerBankName || null,
-        payerBankBranch: form.payerBankBranch || null,
-        payerBankAccount: form.payerBankAccount || null,
+        withholdingTaxPercent: isReceipt && form.withholdingTaxPercent > 0 ? form.withholdingTaxPercent : null,
+        payerBankName: isReceipt ? (form.payerBankName || null) : null,
+        payerBankBranch: isReceipt ? (form.payerBankBranch || null) : null,
+        payerBankAccount: isReceipt ? (form.payerBankAccount || null) : null,
         items: items.map((item, i) => ({
           ...item,
           vatIncluded: false,
@@ -245,7 +246,23 @@ export default function DocumentCreate() {
             <Select
               label="סוג מסמך"
               value={form.documentType}
-              onChange={(e) => setForm({ ...form, documentType: e.target.value })}
+              onChange={(e) => {
+                const newType = e.target.value;
+                const newIsReceipt = ['RECEIPT', 'RECEIPT_INVOICE'].includes(newType);
+                setForm({
+                  ...form,
+                  documentType: newType,
+                  // Clear payment fields when switching away from receipt
+                  ...(!newIsReceipt ? {
+                    paymentMethod: '',
+                    paymentReference: '',
+                    payerBankName: '',
+                    payerBankBranch: '',
+                    payerBankAccount: '',
+                    withholdingTaxPercent: 0,
+                  } : {}),
+                });
+              }}
               options={docTypes}
             />
 
@@ -369,26 +386,28 @@ export default function DocumentCreate() {
                 onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
               />
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isReceipt ? '1fr 1fr' : '1fr', gap: 12 }}>
               <Select
                 label="מטבע"
                 value={form.currency}
                 onChange={(e) => setForm({ ...form, currency: e.target.value })}
                 options={CURRENCY_OPTIONS}
               />
-              <Select
-                label="אמצעי תשלום"
-                value={form.paymentMethod}
-                onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
-                options={[
-                  { value: '', label: 'לא צוין' },
-                  { value: 'CASH', label: 'מזומן' },
-                  { value: 'CHECK', label: 'שיק' },
-                  { value: 'BANK_TRANSFER', label: 'העברה בנקאית' },
-                  { value: 'CREDIT_CARD', label: 'כרטיס אשראי' },
-                  { value: 'OTHER', label: 'אחר' },
-                ]}
-              />
+              {isReceipt && (
+                <Select
+                  label="אמצעי תשלום"
+                  value={form.paymentMethod}
+                  onChange={(e) => setForm({ ...form, paymentMethod: e.target.value })}
+                  options={[
+                    { value: '', label: 'לא צוין' },
+                    { value: 'CASH', label: 'מזומן' },
+                    { value: 'CHECK', label: 'שיק' },
+                    { value: 'BANK_TRANSFER', label: 'העברה בנקאית' },
+                    { value: 'CREDIT_CARD', label: 'כרטיס אשראי' },
+                    { value: 'OTHER', label: 'אחר' },
+                  ]}
+                />
+              )}
             </div>
 
             {/* Exchange rate display */}
@@ -416,7 +435,7 @@ export default function DocumentCreate() {
               </div>
             )}
 
-            {form.paymentMethod === 'CHECK' && (
+            {isReceipt && form.paymentMethod === 'CHECK' && (
               <Input
                 label="מספר שיק / אסמכתא"
                 value={form.paymentReference}
@@ -425,7 +444,7 @@ export default function DocumentCreate() {
             )}
 
             {/* Payer bank details for bank transfer and check */}
-            {showPayerBank && (
+            {isReceipt && showPayerBank && (
               <div style={{
                 padding: 12, background: 'var(--bg-primary)',
                 border: '1px solid var(--border)',
