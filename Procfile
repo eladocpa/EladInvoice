@@ -1,1 +1,1 @@
-web: cd backend && npx prisma migrate deploy && node dist/index.js
+web: cd backend && npx prisma migrate deploy && npx prisma generate && node dist/index.js
