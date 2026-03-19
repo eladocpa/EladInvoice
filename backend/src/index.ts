@@ -49,7 +49,7 @@ app.use('/uploads', express.static(storagePath));
 
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '..', '..', 'frontend', 'dist')));
+  app.use(express.static(path.join(__dirname, 'public')));
 }
 
 // API Routes
@@ -69,7 +69,7 @@ app.get('/api/health', (_req, res) => {
 // SPA fallback
 if (process.env.NODE_ENV === 'production') {
   app.get('*', (_req, res) => {
-    res.sendFile(path.join(__dirname, '..', '..', 'frontend', 'dist', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
   });
 }
 

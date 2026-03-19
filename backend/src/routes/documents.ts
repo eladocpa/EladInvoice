@@ -22,6 +22,10 @@ import { DocumentType } from '@prisma/client';
 const router = Router();
 router.use(authenticate);
 
+function paramId(req: Request): string {
+  return String(req.params.id);
+}
+
 const documentItemSchema = z.object({
   description: z.string().min(1),
   quantity: z.number().int().min(1),
@@ -43,21 +47,24 @@ const createDocumentSchema = z.object({
   items: z.array(documentItemSchema).min(1, 'חייב להוסיף לפחות פריט אחד'),
   originalDocumentId: z.string().uuid().optional().nullable(),
   asDraft: z.boolean().default(false),
-  // Allocation options when API rejects
   allocationAction: z.enum(['request', 'continue_without', 'cancel', 'reverse_charge']).optional(),
 });
 
 // List documents
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { type, status, customerId, page = '1', limit = '20' } = req.query;
+    const type = typeof req.query.type === 'string' ? req.query.type : undefined;
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const customerId = typeof req.query.customerId === 'string' ? req.query.customerId : undefined;
+    const page = parseInt(typeof req.query.page === 'string' ? req.query.page : '1');
+    const limit = parseInt(typeof req.query.limit === 'string' ? req.query.limit : '20');
     const where: Record<string, unknown> = { businessId: req.user!.businessId };
 
     if (type) where.documentType = type;
     if (status) where.status = status;
     if (customerId) where.customerId = customerId;
 
-    const skip = (parseInt(page as string) - 1) * parseInt(limit as string);
+    const skip = (page - 1) * limit;
 
     const [documents, total] = await Promise.all([
       prisma.document.findMany({
@@ -65,12 +72,12 @@ router.get('/', async (req: Request, res: Response) => {
         include: { customer: true, items: true },
         orderBy: { createdAt: 'desc' },
         skip,
-        take: parseInt(limit as string),
+        take: limit,
       }),
       prisma.document.count({ where }),
     ]);
 
-    res.json({ documents, total, page: parseInt(page as string), totalPages: Math.ceil(total / parseInt(limit as string)) });
+    res.json({ documents, total, page, totalPages: Math.ceil(total / limit) });
   } catch {
     res.status(500).json({ error: 'שגיאה בטעינת מסמכים' });
   }
@@ -80,7 +87,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const document = await prisma.document.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
+      where: { id: paramId(req), businessId: req.user!.businessId },
       include: { customer: true, items: { orderBy: { sortOrder: 'asc' } }, creditNotes: true },
     });
     if (!document) {
@@ -412,7 +419,7 @@ router.post('/:id/resolve-allocation', async (req: Request, res: Response) => {
 
     const document = await prisma.document.findFirst({
       where: {
-        id: req.params.id,
+        id: paramId(req),
         businessId: req.user!.businessId,
         allocationStatus: 'PENDING',
       },
@@ -480,7 +487,7 @@ router.post('/:id/resolve-allocation', async (req: Request, res: Response) => {
 router.post('/:id/finalize', async (req: Request, res: Response) => {
   try {
     const document = await prisma.document.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId, status: 'DRAFT' },
+      where: { id: paramId(req), businessId: req.user!.businessId, status: 'DRAFT' },
       include: { customer: true, items: true },
     });
     if (!document) {
@@ -599,7 +606,7 @@ router.post('/:id/mark-paid', async (req: Request, res: Response) => {
     const { paymentMethod, paymentReference } = req.body;
 
     const document = await prisma.document.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
+      where: { id: paramId(req), businessId: req.user!.businessId },
     });
     if (!document) {
       res.status(404).json({ error: 'מסמך לא נמצא' });
@@ -630,7 +637,7 @@ router.post('/:id/send-email', async (req: Request, res: Response) => {
   try {
     const { recipientEmail } = req.body;
     const document = await prisma.document.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
+      where: { id: paramId(req), businessId: req.user!.businessId },
       include: { customer: true, items: true },
     });
     if (!document) {
@@ -664,7 +671,7 @@ router.post('/:id/send-whatsapp', async (req: Request, res: Response) => {
   try {
     const { phone } = req.body;
     const document = await prisma.document.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
+      where: { id: paramId(req), businessId: req.user!.businessId },
       include: { customer: true },
     });
     if (!document) {
@@ -693,7 +700,7 @@ router.post('/:id/send-whatsapp', async (req: Request, res: Response) => {
 router.get('/:id/pdf', async (req: Request, res: Response) => {
   try {
     const document = await prisma.document.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
+      where: { id: paramId(req), businessId: req.user!.businessId },
       include: { customer: true, items: { orderBy: { sortOrder: 'asc' } } },
     });
     if (!document) {

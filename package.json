@@ -1,0 +1,13 @@
+{
+  "name": "elad-invoice",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Israeli Invoicing SaaS",
+  "scripts": {
+    "build": "cd backend && npm install && npx prisma generate && npm run build && cd ../frontend && npm install && npm run build && cp -r dist ../backend/dist/public",
+    "start": "cd backend && npx prisma migrate deploy && node dist/index.js",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "seed": "cd backend && npm run seed"
+  }
+}

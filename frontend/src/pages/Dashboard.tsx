@@ -94,7 +94,7 @@ export default function Dashboard() {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          label: (ctx: { parsed: { y: number } }) => `₪${ctx.parsed.y.toLocaleString('he-IL')}`,
+          label: (ctx: { parsed: { y: number | null } }) => `₪${(ctx.parsed.y ?? 0).toLocaleString('he-IL')}`,
         },
       },
     },

@@ -143,7 +143,7 @@ export async function requestAllocationNumber(
         body: JSON.stringify(payload),
       }, API_TIMEOUT);
 
-      const rawResponse = await response.json();
+      const rawResponse = await response.json() as Record<string, unknown>;
 
       // Save raw response
       await prisma.document.update({
@@ -183,8 +183,8 @@ export async function requestAllocationNumber(
         return {
           required: true,
           status: 'FAILED',
-          errorCode: rawResponse.errorCode || 'UNKNOWN',
-          errorMessage: rawResponse.errorMessage || rawResponse.message || 'רשות המסים דחתה את הבקשה',
+          errorCode: String(rawResponse.errorCode || 'UNKNOWN'),
+          errorMessage: String(rawResponse.errorMessage || rawResponse.message || 'רשות המסים דחתה את הבקשה'),
           rawResponse,
         };
       }

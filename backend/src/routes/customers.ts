@@ -16,13 +16,17 @@ const customerSchema = z.object({
   email: z.string().email().optional().or(z.literal('')),
 });
 
+function paramId(req: Request): string {
+  return String(req.params.id);
+}
+
 // List customers
 router.get('/', async (req: Request, res: Response) => {
   try {
-    const { search } = req.query;
+    const search = typeof req.query.search === 'string' ? req.query.search : undefined;
     const where: Record<string, unknown> = { businessId: req.user!.businessId };
 
-    if (search && typeof search === 'string') {
+    if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { phone: { contains: search } },
@@ -46,7 +50,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:id', async (req: Request, res: Response) => {
   try {
     const customer = await prisma.customer.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
+      where: { id: paramId(req), businessId: req.user!.businessId },
     });
     if (!customer) {
       res.status(404).json({ error: 'לקוח לא נמצא' });
@@ -87,7 +91,7 @@ router.post('/', validate(customerSchema), async (req: Request, res: Response) =
 router.put('/:id', validate(customerSchema), async (req: Request, res: Response) => {
   try {
     const existing = await prisma.customer.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
+      where: { id: paramId(req), businessId: req.user!.businessId },
     });
     if (!existing) {
       res.status(404).json({ error: 'לקוח לא נמצא' });
@@ -95,7 +99,7 @@ router.put('/:id', validate(customerSchema), async (req: Request, res: Response)
     }
 
     const customer = await prisma.customer.update({
-      where: { id: req.params.id },
+      where: { id: paramId(req) },
       data: req.body,
     });
 
@@ -118,20 +122,24 @@ router.put('/:id', validate(customerSchema), async (req: Request, res: Response)
 // Delete customer (only if no documents)
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
+    const id = paramId(req);
+    const docCount = await prisma.document.count({
+      where: { customerId: id, businessId: req.user!.businessId },
+    });
+    if (docCount > 0) {
+      res.status(400).json({ error: 'לא ניתן למחוק לקוח עם מסמכים קיימים' });
+      return;
+    }
+
     const existing = await prisma.customer.findFirst({
-      where: { id: req.params.id, businessId: req.user!.businessId },
-      include: { documents: { take: 1 } },
+      where: { id, businessId: req.user!.businessId },
     });
     if (!existing) {
       res.status(404).json({ error: 'לקוח לא נמצא' });
       return;
     }
-    if (existing.documents.length > 0) {
-      res.status(400).json({ error: 'לא ניתן למחוק לקוח עם מסמכים קיימים' });
-      return;
-    }
 
-    await prisma.customer.delete({ where: { id: req.params.id } });
+    await prisma.customer.delete({ where: { id } });
     res.json({ message: 'לקוח נמחק בהצלחה' });
   } catch {
     res.status(500).json({ error: 'שגיאה במחיקת לקוח' });
