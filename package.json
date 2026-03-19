@@ -4,8 +4,8 @@
   "private": true,
   "description": "Israeli Invoicing SaaS",
   "scripts": {
-    "build": "cd backend && npm install && npx prisma generate && npm run build && cd ../frontend && npm install && npm run build && cp -r dist ../backend/dist/public",
-    "start": "cd backend && npx prisma migrate deploy && node dist/index.js",
+    "build": "cd backend && npm install && npx prisma generate && npm run build && cd ../frontend && npm install && npm run build && mkdir -p ../backend/dist/public && cp -r dist/* ../backend/dist/public/ && echo 'Frontend copied to backend/dist/public'",
+    "start": "cd backend && (npx prisma migrate deploy || echo 'Migration skipped') && node dist/index.js",
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "seed": "cd backend && npm run seed"

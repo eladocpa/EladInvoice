@@ -8,6 +8,7 @@ import morgan from 'morgan';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
+import fs from 'fs';
 
 import authRoutes from './routes/auth';
 import businessRoutes from './routes/businesses';
@@ -22,10 +23,12 @@ const PORT = process.env.PORT || 3000;
 
 // Security
 app.use(helmet({ contentSecurityPolicy: false }));
+
+const corsOrigin = process.env.APP_URL
+  ? [process.env.APP_URL]
+  : ['http://localhost:5173', 'http://localhost:3000'];
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production'
-    ? process.env.APP_URL
-    : ['http://localhost:5173', 'http://localhost:3000'],
+  origin: corsOrigin,
   credentials: true,
 }));
 
@@ -47,9 +50,11 @@ app.use(morgan('short'));
 const storagePath = process.env.STORAGE_PATH || path.join(__dirname, '..', 'uploads');
 app.use('/uploads', express.static(storagePath));
 
-// Serve frontend in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, 'public')));
+// Serve frontend static files (if built)
+const publicPath = path.join(__dirname, 'public');
+const hasPublicDir = fs.existsSync(publicPath);
+if (hasPublicDir) {
+  app.use(express.static(publicPath));
 }
 
 // API Routes
@@ -75,10 +80,10 @@ app.get('/api/health', async (_req, res) => {
   res.json(health);
 });
 
-// SPA fallback
-if (process.env.NODE_ENV === 'production') {
+// SPA fallback — serve index.html for all non-API routes
+if (hasPublicDir) {
   app.get('*', (_req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(publicPath, 'index.html'));
   });
 }
 
@@ -90,6 +95,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Frontend: ${hasPublicDir ? 'serving from ' + publicPath : 'NOT FOUND — run build first'}`);
 });
 
 export default app;
