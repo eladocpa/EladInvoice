@@ -18,7 +18,7 @@ const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
  */
 async function fetchBoiRate(currency: 'USD' | 'EUR'): Promise<number> {
   const today = new Date().toISOString().split('T')[0];
-  const url = `https://boi.org.il/PublicApi/GetExchangeRates?asOf=${today}&currencyCode=${currency}`;
+  const url = `https://boi.org.il/PublicApi/GetExchangeRates?asOf=${today}`;
 
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
@@ -31,24 +31,15 @@ async function fetchBoiRate(currency: 'USD' | 'EUR'): Promise<number> {
 
   const data: any = await response.json();
 
-  // The API returns an array of exchange rate objects
-  if (Array.isArray(data) && data.length > 0) {
-    const rateObj = data[0];
-    if (typeof rateObj.currentExchangeRate === 'number') {
-      return rateObj.currentExchangeRate;
+  // Response format: { exchangeRates: [{ key: "USD", currentExchangeRate: 3.119, unit: 1 }, ...] }
+  const rates = data?.exchangeRates;
+  if (Array.isArray(rates)) {
+    const rateObj = rates.find((r: any) => r.key === currency);
+    if (rateObj && typeof rateObj.currentExchangeRate === 'number') {
+      // Adjust for unit (e.g., JPY is per 100 units)
+      const unit = rateObj.unit || 1;
+      return rateObj.currentExchangeRate / unit;
     }
-    // Try alternate field names
-    if (typeof rateObj.rate === 'number') {
-      return rateObj.rate;
-    }
-    if (typeof rateObj.value === 'number') {
-      return rateObj.value;
-    }
-  }
-
-  // If the response is a single object
-  if (data && typeof data.currentExchangeRate === 'number') {
-    return data.currentExchangeRate;
   }
 
   throw new Error('Could not parse BOI exchange rate response');

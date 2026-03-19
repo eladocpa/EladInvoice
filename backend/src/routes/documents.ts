@@ -90,6 +90,26 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// Get allocation info
+router.get('/allocation-info', async (_req: Request, res: Response) => {
+  res.json({ threshold: getAllocationThreshold() });
+});
+
+// Get exchange rate for a currency
+router.get('/exchange-rate/:currency', async (req: Request, res: Response) => {
+  try {
+    const currency = String(req.params.currency).toUpperCase();
+    if (currency === 'ILS') {
+      res.json({ currency, rate: 1, rateInt: 10000 });
+      return;
+    }
+    const rate = await getExchangeRate(currency);
+    res.json({ currency, rate, rateInt: rateToInt(rate) });
+  } catch {
+    res.status(500).json({ error: 'שגיאה בקבלת שער חליפין' });
+  }
+});
+
 // Get single document
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -633,26 +653,6 @@ router.post('/test-allocation', async (req: Request, res: Response) => {
     res.json(result);
   } catch {
     res.status(500).json({ error: 'שגיאה בבדיקת החיבור' });
-  }
-});
-
-// Get allocation info
-router.get('/allocation-info', async (_req: Request, res: Response) => {
-  res.json({ threshold: getAllocationThreshold() });
-});
-
-// Get exchange rate for a currency
-router.get('/exchange-rate/:currency', async (req: Request, res: Response) => {
-  try {
-    const currency = String(req.params.currency).toUpperCase();
-    if (currency === 'ILS') {
-      res.json({ currency, rate: 1, rateInt: 10000 });
-      return;
-    }
-    const rate = await getExchangeRate(currency);
-    res.json({ currency, rate, rateInt: rateToInt(rate) });
-  } catch {
-    res.status(500).json({ error: 'שגיאה בקבלת שער חליפין' });
   }
 });
 
