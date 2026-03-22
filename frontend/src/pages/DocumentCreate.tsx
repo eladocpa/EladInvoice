@@ -219,7 +219,7 @@ export default function DocumentCreate() {
   const validate = (): Record<string, string> => {
     const errors: Record<string, string> = {};
 
-    if (!form.issueDate) errors.issueDate = 'שדה חובה';
+    if (!form.issueDate) errors.issueDate = 'יש להזין תאריך הפקה';
 
     // Date sequence validation
     if (form.issueDate && lastDocDate && form.issueDate < lastDocDate && !dateOverride) {
@@ -234,8 +234,14 @@ export default function DocumentCreate() {
     });
 
     // Receipt-specific validation
+    if (isReceipt && !form.paymentMethod) {
+      errors.paymentMethod = 'יש לבחור אמצעי תשלום';
+    }
     if (isReceipt && showPayerBank) {
       if (!form.payerBankName) errors.payerBankName = 'יש למלא שם בנק';
+    }
+    if (isReceipt && !form.dueDate) {
+      errors.dueDate = 'יש להזין תאריך תשלום';
     }
 
     // Credit note must have original document
@@ -247,22 +253,32 @@ export default function DocumentCreate() {
   };
 
   // Build readable error summary for toast
+  const fieldLabels: Record<string, string> = {
+    issueDate: 'תאריך הפקה',
+    dueDate: 'תאריך תשלום',
+    documentType: 'סוג מסמך',
+    customerId: 'לקוח',
+    paymentMethod: 'אמצעי תשלום',
+    paymentReference: 'אסמכתא',
+    payerBankName: 'שם בנק משלם',
+    payerBankBranch: 'סניף בנק',
+    payerBankAccount: 'חשבון בנק',
+    originalDocumentId: 'מזהה מסמך מקורי',
+    currency: 'מטבע',
+    notes: 'הערות',
+  };
+
   const getErrorSummary = (errors: Record<string, string>): string => {
     const messages: string[] = [];
     for (const [key, msg] of Object.entries(errors)) {
       if (key.startsWith('items.')) {
         const idx = parseInt(key.split('.')[1]);
         const field = key.split('.')[2];
-        const fieldName = field === 'description' ? 'תיאור' : 'מחיר';
-        messages.push(`פריט ${idx + 1}: ${fieldName} - ${msg}`);
-      } else if (key === 'issueDate') {
-        messages.push(`תאריך: ${msg}`);
-      } else if (key === 'payerBankName') {
-        messages.push(`שם בנק משלם: ${msg}`);
-      } else if (key === 'originalDocumentId') {
-        messages.push(`מזהה מסמך מקורי: ${msg}`);
+        const fieldName = field === 'description' ? 'תיאור' : field === 'unitPrice' ? 'מחיר' : field === 'quantity' ? 'כמות' : field;
+        messages.push(`פריט ${idx + 1} - ${fieldName}: ${msg}`);
       } else {
-        messages.push(msg);
+        const label = fieldLabels[key] || key;
+        messages.push(`${label}: ${msg}`);
       }
     }
     return messages.join('\n');

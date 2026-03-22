@@ -28,28 +28,34 @@ function paramId(req: Request): string {
 }
 
 const documentItemSchema = z.object({
-  description: z.string().min(1),
-  quantity: z.number().int().min(1),
-  unitPrice: z.number().int().min(0),
+  description: z.string({ required_error: 'יש למלא תיאור פריט' }).min(1, 'יש למלא תיאור פריט'),
+  quantity: z.number({ required_error: 'יש להזין כמות' }).int('כמות חייבת להיות מספר שלם').min(1, 'כמות חייבת להיות לפחות 1'),
+  unitPrice: z.number({ required_error: 'יש להזין מחיר' }).int('מחיר חייב להיות מספר שלם').min(0, 'מחיר לא יכול להיות שלילי'),
   discountPercent: z.number().int().min(0).max(10000).default(0),
   vatIncluded: z.boolean().default(false),
   sortOrder: z.number().int().default(0),
 });
 
 const createDocumentSchema = z.object({
-  documentType: z.enum(['INVOICE', 'RECEIPT', 'RECEIPT_INVOICE', 'CREDIT_NOTE', 'DELIVERY_NOTE']),
-  customerId: z.string().uuid().optional().nullable(),
-  issueDate: z.string(),
+  documentType: z.enum(['INVOICE', 'RECEIPT', 'RECEIPT_INVOICE', 'CREDIT_NOTE', 'DELIVERY_NOTE'], {
+    required_error: 'יש לבחור סוג מסמך',
+    invalid_type_error: 'סוג מסמך לא תקין',
+  }),
+  customerId: z.string().uuid('מזהה לקוח לא תקין').optional().nullable(),
+  issueDate: z.string({ required_error: 'יש להזין תאריך הפקה' }).min(1, 'יש להזין תאריך הפקה'),
   dueDate: z.string().optional().nullable(),
-  currency: z.enum(['ILS', 'USD', 'EUR', 'BTC', 'ETH', 'USDT', 'USDC']).default('ILS'),
+  currency: z.enum(['ILS', 'USD', 'EUR', 'BTC', 'ETH', 'USDT', 'USDC'], {
+    invalid_type_error: 'מטבע לא תקין',
+  }).default('ILS'),
   notes: z.string().optional(),
-  paymentMethod: z.enum(['CASH', 'CHECK', 'BANK_TRANSFER', 'CREDIT_CARD', 'OTHER']).optional().nullable(),
+  paymentMethod: z.enum(['CASH', 'CHECK', 'BANK_TRANSFER', 'CREDIT_CARD', 'OTHER'], {
+    invalid_type_error: 'אמצעי תשלום לא תקין',
+  }).optional().nullable(),
   paymentReference: z.string().optional(),
   items: z.array(documentItemSchema).min(1, 'חייב להוסיף לפחות פריט אחד'),
-  originalDocumentId: z.string().uuid().optional().nullable(),
+  originalDocumentId: z.string().uuid('מזהה מסמך מקורי לא תקין').optional().nullable(),
   asDraft: z.boolean().default(false),
   allocationAction: z.enum(['request', 'continue_without', 'cancel', 'reverse_charge']).optional(),
-  // New fields
   noVat: z.boolean().default(false),
   withholdingTaxPercent: z.number().int().min(0).max(10000).optional().nullable(),
   payerBankName: z.string().optional().nullable(),
