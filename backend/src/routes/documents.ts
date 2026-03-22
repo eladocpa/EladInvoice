@@ -47,15 +47,15 @@ const createDocumentSchema = z.object({
   currency: z.enum(['ILS', 'USD', 'EUR', 'BTC', 'ETH', 'USDT', 'USDC'], {
     invalid_type_error: 'מטבע לא תקין',
   }).default('ILS'),
-  notes: z.string().optional(),
+  notes: z.string().optional().nullable(),
   paymentMethod: z.enum(['CASH', 'CHECK', 'BANK_TRANSFER', 'CREDIT_CARD', 'OTHER'], {
     invalid_type_error: 'אמצעי תשלום לא תקין',
   }).optional().nullable(),
-  paymentReference: z.string().optional(),
+  paymentReference: z.string().optional().nullable(),
   items: z.array(documentItemSchema).min(1, 'חייב להוסיף לפחות פריט אחד'),
   originalDocumentId: z.string().uuid('מזהה מסמך מקורי לא תקין').optional().nullable(),
   asDraft: z.boolean().default(false),
-  allocationAction: z.enum(['request', 'continue_without', 'cancel', 'reverse_charge']).optional(),
+  allocationAction: z.enum(['request', 'continue_without', 'cancel', 'reverse_charge']).optional().nullable(),
   noVat: z.boolean().default(false),
   withholdingTaxPercent: z.number().int().min(0).max(10000).optional().nullable(),
   payerBankName: z.string().optional().nullable(),
