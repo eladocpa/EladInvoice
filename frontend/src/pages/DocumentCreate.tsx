@@ -7,6 +7,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
+import DateInput from '../components/ui/DateInput';
 
 interface LineItem {
   description: string;
@@ -208,21 +209,43 @@ export default function DocumentCreate() {
 
     // Items validation
     items.forEach((item, i) => {
-      if (!item.description) errors[`items.${i}.description`] = 'שדה חובה';
+      if (!item.description) errors[`items.${i}.description`] = 'יש למלא תיאור';
       if (item.unitPrice <= 0) errors[`items.${i}.unitPrice`] = 'יש להזין מחיר';
     });
 
     // Receipt-specific validation
     if (isReceipt && showPayerBank) {
-      if (!form.payerBankName) errors.payerBankName = 'שדה חובה';
+      if (!form.payerBankName) errors.payerBankName = 'יש למלא שם בנק';
     }
 
     // Credit note must have original document
     if (form.documentType === 'CREDIT_NOTE' && !form.originalDocumentId) {
-      errors.originalDocumentId = 'שדה חובה';
+      errors.originalDocumentId = 'יש להזין מזהה מסמך מקורי';
     }
 
     return errors;
+  };
+
+  // Build readable error summary for toast
+  const getErrorSummary = (errors: Record<string, string>): string => {
+    const messages: string[] = [];
+    for (const [key, msg] of Object.entries(errors)) {
+      if (key.startsWith('items.')) {
+        const idx = parseInt(key.split('.')[1]);
+        const field = key.split('.')[2];
+        const fieldName = field === 'description' ? 'תיאור' : 'מחיר';
+        messages.push(`פריט ${idx + 1}: ${fieldName} - ${msg}`);
+      } else if (key === 'issueDate') {
+        messages.push(`תאריך: ${msg}`);
+      } else if (key === 'payerBankName') {
+        messages.push(`שם בנק משלם: ${msg}`);
+      } else if (key === 'originalDocumentId') {
+        messages.push(`מזהה מסמך מקורי: ${msg}`);
+      } else {
+        messages.push(msg);
+      }
+    }
+    return messages.join('\n');
   };
 
   const handleSubmit = async (asDraft: boolean) => {
@@ -233,9 +256,7 @@ export default function DocumentCreate() {
     const errors = validate();
     if (Object.keys(errors).length > 0) {
       setFieldErrors(errors);
-      // Build a readable error message
-      const errorCount = Object.keys(errors).length;
-      toast.error(`יש ${errorCount} שדות שלא מולאו כראוי`);
+      toast.error(getErrorSummary(errors), { duration: 5000, style: { whiteSpace: 'pre-line', textAlign: 'right' } });
       return;
     }
 
@@ -279,7 +300,7 @@ export default function DocumentCreate() {
           backendErrors[detail.field] = detail.message;
         }
         setFieldErrors(backendErrors);
-        toast.error('נתונים לא תקינים — יש לתקן את השדות המסומנים');
+        toast.error(getErrorSummary(backendErrors), { duration: 5000, style: { whiteSpace: 'pre-line', textAlign: 'right' } });
       } else {
         toast.error(error.response?.data?.error || 'שגיאה ביצירת מסמך');
       }
@@ -423,12 +444,11 @@ export default function DocumentCreate() {
             </div>
 
             {/* Issue date only */}
-            <Input
+            <DateInput
               label={req('תאריך')}
-              type="date"
               value={form.issueDate}
               error={fieldErrors.issueDate}
-              onChange={(e) => updateForm({ issueDate: e.target.value })}
+              onChange={(val) => updateForm({ issueDate: val })}
             />
 
             {/* Currency */}
@@ -571,11 +591,10 @@ export default function DocumentCreate() {
               </h2>
 
               {/* Due date under payment section */}
-              <Input
+              <DateInput
                 label="תאריך תשלום"
-                type="date"
                 value={form.dueDate}
-                onChange={(e) => updateForm({ dueDate: e.target.value })}
+                onChange={(val) => updateForm({ dueDate: val })}
               />
 
               <Select
