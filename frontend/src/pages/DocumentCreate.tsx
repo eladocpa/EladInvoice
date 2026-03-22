@@ -56,6 +56,13 @@ function req(label: string): string {
   return label + ' *';
 }
 
+/** Format ISO date to dd/mm/yyyy */
+function formatDateDisplay(isoDate: string): string {
+  if (!isoDate) return '';
+  const [y, m, d] = isoDate.split('-');
+  return `${d}/${m}/${y}`;
+}
+
 export default function DocumentCreate() {
   const { business } = useAuth();
   const navigate = useNavigate();
@@ -78,6 +85,10 @@ export default function DocumentCreate() {
   // Exchange rate
   const [exchangeRate, setExchangeRate] = useState<number | null>(null);
   const [fetchingRate, setFetchingRate] = useState(false);
+
+  // Date sequence validation
+  const [lastDocDate, setLastDocDate] = useState<string | null>(null);
+  const [dateOverride, setDateOverride] = useState(false);
 
   const [form, setForm] = useState({
     documentType: searchParams.get('type') || 'INVOICE',
@@ -103,6 +114,9 @@ export default function DocumentCreate() {
 
   useEffect(() => {
     api.get('/customers').then(({ data }) => setCustomers(data)).catch(() => {});
+    api.get('/documents/last-date').then(({ data }) => {
+      if (data.lastDate) setLastDocDate(data.lastDate);
+    }).catch(() => {});
   }, []);
 
   // Fetch exchange rate when currency changes
@@ -206,6 +220,12 @@ export default function DocumentCreate() {
     const errors: Record<string, string> = {};
 
     if (!form.issueDate) errors.issueDate = 'שדה חובה';
+
+    // Date sequence validation
+    if (form.issueDate && lastDocDate && form.issueDate < lastDocDate && !dateOverride) {
+      const [y, m, d] = lastDocDate.split('-');
+      errors.issueDate = `תאריך מוקדם מהמסמך האחרון (${d}/${m}/${y}). יש לסמן אישור חריגה`;
+    }
 
     // Items validation
     items.forEach((item, i) => {
@@ -448,8 +468,48 @@ export default function DocumentCreate() {
               label={req('תאריך')}
               value={form.issueDate}
               error={fieldErrors.issueDate}
-              onChange={(val) => updateForm({ issueDate: val })}
+              onChange={(val) => {
+                updateForm({ issueDate: val });
+                // Reset override when date changes
+                setDateOverride(false);
+              }}
+              min={(!dateOverride && lastDocDate) ? lastDocDate : undefined}
             />
+
+            {/* Date sequence warning + override */}
+            {form.issueDate && lastDocDate && form.issueDate < lastDocDate && (
+              <div style={{
+                padding: 12,
+                background: 'rgba(231, 76, 60, 0.08)',
+                border: '1px solid rgba(231, 76, 60, 0.3)',
+                borderRadius: 'var(--radius-xs)',
+                marginBottom: 12,
+                fontSize: 13,
+              }}>
+                <p style={{ color: 'var(--error)', marginBottom: 8 }}>
+                  תאריך המסמך ({formatDateDisplay(form.issueDate)}) מוקדם מתאריך המסמך האחרון ({formatDateDisplay(lastDocDate)}).
+                  הזנת תאריך מוקדם עלולה לפגוע ברצף התאריכים.
+                </p>
+                <label style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={dateOverride}
+                    onChange={(e) => {
+                      setDateOverride(e.target.checked);
+                      // Clear date error when override is checked
+                      if (e.target.checked) {
+                        setFieldErrors(prev => { const n = { ...prev }; delete n.issueDate; return n; });
+                      }
+                    }}
+                    style={{ width: 16, height: 16 }}
+                  />
+                  <span>בהתייעצות עם רואה חשבון — אישור חריגה מרצף התאריכים</span>
+                </label>
+              </div>
+            )}
 
             {/* Currency */}
             <Select

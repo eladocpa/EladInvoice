@@ -95,6 +95,31 @@ router.get('/allocation-info', async (_req: Request, res: Response) => {
   res.json({ threshold: getAllocationThreshold() });
 });
 
+// Get last document date for date sequence validation
+router.get('/last-date', async (req: Request, res: Response) => {
+  try {
+    const lastDoc = await prisma.document.findFirst({
+      where: {
+        businessId: req.user!.businessId,
+        status: { not: 'DRAFT' },
+      },
+      orderBy: { issueDate: 'desc' },
+      select: { issueDate: true, documentNumber: true, documentType: true },
+    });
+    if (lastDoc) {
+      res.json({
+        lastDate: lastDoc.issueDate.toISOString().split('T')[0],
+        documentNumber: lastDoc.documentNumber,
+        documentType: lastDoc.documentType,
+      });
+    } else {
+      res.json({ lastDate: null });
+    }
+  } catch {
+    res.status(500).json({ error: 'שגיאה בטעינת תאריך אחרון' });
+  }
+});
+
 // Get exchange rate for a currency
 router.get('/exchange-rate/:currency', async (req: Request, res: Response) => {
   try {
