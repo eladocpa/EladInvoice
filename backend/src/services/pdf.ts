@@ -311,23 +311,16 @@ function generateHtml(document: DocumentWithRelations, business: Business): stri
       </div>
     </div>
 
+    ${document.customer ? `
     <div class="parties">
-      <div class="party-box">
-        <h3>פרטי מוציא המסמך</h3>
-        <p><strong>${business.name}</strong></p>
-        <p>ח.פ./ת.ז.: ${business.taxId}</p>
-        ${business.vatNumber ? `<p>מס' עוסק מורשה: ${business.vatNumber}</p>` : ''}
-        ${business.address ? `<p>${business.address}${business.city ? ', ' + business.city : ''}</p>` : ''}
-      </div>
-      ${document.customer ? `
       <div class="party-box">
         <h3>פרטי הנמען</h3>
         <p><strong>${document.customer.name}</strong></p>
         ${document.customer.taxId ? `<p>ח.פ./ת.ז.: ${document.customer.taxId}</p>` : ''}
         ${document.customer.address ? `<p>${document.customer.address}${document.customer.city ? ', ' + document.customer.city : ''}</p>` : ''}
         ${document.customer.phone ? `<p>טל: ${document.customer.phone}</p>` : ''}
-      </div>` : ''}
-    </div>
+      </div>
+    </div>` : ''}
 
     <table class="items-table">
       <thead>
